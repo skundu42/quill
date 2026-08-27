@@ -1,0 +1,51 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Build products
+.build/
+build/
+dist/
+DerivedData/
+*.app
+*.dSYM
+*.dSYM.zip
+
+# Xcode and XcodeGen
+Quill.xcodeproj/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Swift Package Manager
+.swiftpm/
+
+# Website dependencies and generated output
+node_modules/
+.parcel-cache/
+.vite/
+coverage/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+secrets/
+
+# Editors and temporary files
+.idea/
+.vscode/
+*.swp
+*.swo
+*.tmp
+*.log

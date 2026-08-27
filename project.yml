@@ -1,0 +1,58 @@
+name: Quill
+options:
+  bundleIdPrefix: com.quill
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    DEVELOPMENT_TEAM: ""
+targets:
+  Quill:
+    type: application
+    platform: macOS
+    sources:
+      - path: Quill
+        excludes:
+          - Resources/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.quill.voice
+        PRODUCT_NAME: Quill
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: Quill/Resources/Quill.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Quill/Resources/Info.plist
+    dependencies:
+      - sdk: AVFoundation.framework
+      - sdk: Carbon.framework
+      - sdk: ServiceManagement.framework
+  QuillTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - QuillTests
+    dependencies:
+      - target: Quill
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.quill.voice.tests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Quill:
+    build:
+      targets:
+        Quill: all
+        QuillTests: [test]
+    test:
+      targets:
+        - QuillTests

@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Quill is open-source, system-wide voice typing for macOS. Hold a shortcut, speak, and polished text appears wherever you are typing."
+    />
+    <meta name="theme-color" content="#f6f7f4" />
+    <title>Quill — Voice typing for macOS</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%23111312'/%3E%3Cpath d='M45.8 14.4c-10.6 2.3-18.3 7.5-23.1 15.5-3 5-4.3 10.3-4 15.9l7.8-8.2 5.5-.3-4.1-2.2 5.7-6.1 5.7-.2-4.2-2.4c3.6-3.8 7.6-7.8 10.7-12Z' fill='%23ddffc5'/%3E%3Cpath d='M17 50c5.8-9.1 12.4-17.1 20-24' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <div class="announcement" role="status">
+      <span class="announcement-dot" aria-hidden="true"></span>
+      Quill is in early development
+      <a href="#download">Follow the build <span aria-hidden="true">↗</span></a>
+    </div>
+
+    <header class="site-header shell">
+      <a class="brand" href="#top" aria-label="Quill home">
+        <svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true">
+          <rect width="36" height="36" rx="9" fill="currentColor" />
+          <path d="M26.8 8.5c-6.2 1.4-10.8 4.4-13.6 9.1a15.8 15.8 0 0 0-2.3 9.3l4.6-4.8 3.2-.2-2.4-1.3 3.4-3.6 3.3-.1-2.4-1.4c2.1-2.2 4.4-4.6 6.2-7Z" fill="#ddffc5" />
+          <path d="M9.9 29.3c3.4-5.3 7.3-10 11.8-14" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" />
+        </svg>
+        <span>Quill</span>
+      </a>
+
+      <nav class="desktop-nav" aria-label="Main navigation">
+        <a href="#how-it-works">How it works</a>
+        <a href="#native">Native by design</a>
+        <a href="#privacy">Privacy</a>
+        <a href="#open-source">Open source</a>
+      </nav>
+
+      <a class="header-cta" href="#download">
+        Get Quill
+        <span class="arrow-box" aria-hidden="true">↓</span>
+      </a>
+    </header>
+
+    <main id="main">
+      <section class="hero shell" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow">Voice typing for macOS</p>
+          <h1>Say it.<br /><span>It’s already typed.</span></h1>
+          <p class="hero-intro">
+            Hold one shortcut, speak naturally, and Quill puts polished text wherever your cursor is. No window. No copy and paste.
+          </p>
+        </div>
+
+        <div class="voice-instrument" aria-label="Interactive Quill voice typing demonstration">
+          <div class="instrument-topbar">
+            <div class="app-identity">
+              <svg viewBox="0 0 36 36" aria-hidden="true">
+                <rect width="36" height="36" rx="9" fill="#111312" />
+                <path d="M26.8 8.5c-6.2 1.4-10.8 4.4-13.6 9.1a15.8 15.8 0 0 0-2.3 9.3l4.6-4.8 3.2-.2-2.4-1.3 3.4-3.6 3.3-.1-2.4-1.4c2.1-2.2 4.4-4.6 6.2-7Z" fill="#ddffc5" />
+                <path d="M9.9 29.3c3.4-5.3 7.3-10 11.8-14" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" />
+              </svg>
+              <span>Quill</span>
+            </div>
+            <span class="status-chip" data-status>Ready</span>
+          </div>
+
+          <div class="transcript-stage">
+            <span class="stage-label">In Slack</span>
+            <p class="transcript" data-transcript aria-live="polite">Hey Sarah, can we move the meeting to Thursday at 3 PM?</p>
+            <span class="cursor" aria-hidden="true"></span>
+          </div>
+
+          <div class="recording-pill" data-pill>
+            <span class="recording-dot" aria-hidden="true"></span>
+            <div class="waveform" aria-hidden="true">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+            <span class="pill-label">Hold to speak</span>
+          </div>
+        </div>
+
+        <div class="hero-actions" id="download">
+          <a class="action-card action-primary" href="#open-source">
+            <span>
+              <small>macOS 14+</small>
+              Download v0.1
+            </span>
+            <span class="action-icon" aria-hidden="true">↓</span>
+          </a>
+          <button class="action-card action-demo" type="button" data-hold-button>
+            <span>
+              <small>Interactive demo</small>
+              <span data-button-label>Hold to try Quill</span>
+            </span>
+            <span class="shortcut" aria-hidden="true"><kbd>⌥</kbd><kbd>Space</kbd></span>
+          </button>
+        </div>
+      </section>
+
+      <section class="workflow shell section" id="how-it-works">
+        <div class="section-heading">
+          <p class="eyebrow">One gesture, everywhere</p>
+          <h2>Stay in the flow.</h2>
+          <p>Quill is designed as a system capability, not another destination. Your hands and attention never leave the app you’re using.</p>
+        </div>
+
+        <div class="workflow-board">
+          <div class="workflow-step">
+            <span class="step-index">Shortcut down</span>
+            <div class="keycap-group" aria-hidden="true"><kbd>⌥</kbd><kbd>Space</kbd></div>
+            <h3>Hold</h3>
+            <p>Recording starts in under 150 milliseconds.</p>
+          </div>
+          <div class="flow-connector" aria-hidden="true"><span></span></div>
+          <div class="workflow-step is-signal">
+            <span class="step-index">While held</span>
+            <div class="mini-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            <h3>Speak</h3>
+            <p>Talk naturally—even with pauses and corrections.</p>
+          </div>
+          <div class="flow-connector" aria-hidden="true"><span></span></div>
+          <div class="workflow-step">
+            <span class="step-index">Shortcut up</span>
+            <div class="insert-preview" aria-hidden="true">Thursday at 3 PM.<b></b></div>
+            <h3>Done</h3>
+            <p>Polished text lands at your active cursor.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="native-section shell section" id="native">
+        <div class="native-copy">
+          <p class="eyebrow">Native by design</p>
+          <h2>There when you need it.<br />Gone when you don’t.</h2>
+          <p>
+            Quill lives quietly in the menu bar, uses familiar macOS materials, and never steals focus. The only interface you’ll see day to day is a small listening indicator.
+          </p>
+          <ul class="check-list">
+            <li><span aria-hidden="true">✓</span> Swift and SwiftUI—not Electron</li>
+            <li><span aria-hidden="true">✓</span> Works in any editable text field</li>
+            <li><span aria-hidden="true">✓</span> Automatic language detection</li>
+          </ul>
+        </div>
+
+        <div class="desktop-mock" aria-label="Quill menu bar interface preview">
+          <div class="desktop-wallpaper">
+            <div class="menu-bar">
+              <span class="apple-mark" aria-hidden="true">●</span>
+              <strong>Notes</strong>
+              <span>File</span><span>Edit</span><span>Format</span>
+              <div class="menu-spacer"></div>
+              <span>9:41</span>
+              <button class="menu-quill" type="button" aria-label="Open Quill menu">✒</button>
+            </div>
+            <div class="quill-menu">
+              <div class="menu-title"><span class="tiny-mark">✒</span><strong>Quill</strong><span class="menu-state">Ready</span></div>
+              <button type="button"><span><i class="live-dot"></i>Start Dictation</span><kbd>⌥ Space</kbd></button>
+              <div class="menu-rule"></div>
+              <button type="button"><span>Microphone</span><small>MacBook Pro Mic</small></button>
+              <button type="button"><span>Mode</span><small>Smart</small></button>
+              <div class="menu-rule"></div>
+              <button type="button"><span>Settings…</span><kbd>⌘ ,</kbd></button>
+            </div>
+            <div class="floating-preview">
+              <span class="recording-dot"></span>
+              <div class="mini-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <span>Listening</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="smart-section shell section">
+        <div class="section-heading compact">
+          <p class="eyebrow">Smart transcription</p>
+          <h2>Speak messily.<br />Write clearly.</h2>
+        </div>
+
+        <div class="rewrite-demo">
+          <div class="rewrite-row raw-row">
+            <span class="rewrite-label">You say</span>
+            <p>“So um can you send that to John—actually wait—send it to Alex tomorrow morning.”</p>
+          </div>
+          <div class="rewrite-arrow" aria-hidden="true">
+            <span></span>
+            <svg viewBox="0 0 18 18"><path d="M3 9h11M10 5l4 4-4 4" /></svg>
+          </div>
+          <div class="rewrite-row clean-row">
+            <span class="rewrite-label">Quill types</span>
+            <p>Can you send that to Alex tomorrow morning?</p>
+            <span class="text-cursor" aria-hidden="true"></span>
+          </div>
+        </div>
+
+        <div class="capability-ticker" aria-label="Smart transcription capabilities">
+          <span>Removes filler words</span><i></i>
+          <span>Understands corrections</span><i></i>
+          <span>Adds punctuation</span><i></i>
+          <span>Formats dates & numbers</span><i></i>
+          <span>Supports 85+ languages</span>
+        </div>
+      </section>
+
+      <section class="privacy-section shell section" id="privacy">
+        <div class="privacy-visual" aria-hidden="true">
+          <div class="privacy-node mic-node">
+            <svg viewBox="0 0 32 32"><rect x="11" y="4" width="10" height="17" rx="5" /><path d="M7 16a9 9 0 0 0 18 0M16 25v4M11 29h10" /></svg>
+            <span>Microphone</span>
+          </div>
+          <div class="data-line"><i></i><i></i><i></i></div>
+          <div class="privacy-node memory-node"><span class="memory-glyph">00</span><span>Memory only</span></div>
+          <div class="data-line reverse"><i></i><i></i><i></i></div>
+          <div class="privacy-node trash-node">
+            <svg viewBox="0 0 32 32"><path d="M9 10h14l-1 18H10L9 10ZM7 7h18M12 7l1-3h6l1 3M13 14v9M19 14v9" /></svg>
+            <span>Deleted</span>
+          </div>
+        </div>
+
+        <div class="privacy-copy">
+          <p class="eyebrow">Private by default</p>
+          <h2>Your voice leaves no footprint.</h2>
+          <p>Audio is streamed from memory to Gemini for transcription, then discarded. Quill stores no recordings and keeps no transcript history unless you explicitly turn it on.</p>
+          <div class="privacy-facts">
+            <div><strong>0</strong><span>audio retained</span></div>
+            <div><strong>BYOK</strong><span>your Gemini key</span></div>
+            <div><strong>Keychain</strong><span>credential storage</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="open-source-section shell section" id="open-source">
+        <div class="source-card">
+          <div class="source-copy">
+            <p class="eyebrow">Open source, by design</p>
+            <h2>Your keyboard.<br />Your key.<br />Your code.</h2>
+            <p>Inspect it, extend it, or run your own fork. Quill’s macOS client is open source under a permissive license with no backend required.</p>
+          </div>
+          <div class="source-terminal" aria-label="Terminal installation example">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>Terminal — zsh</span></div>
+            <pre><code><span class="prompt">$</span> brew install --cask quill
+
+<span class="muted">==&gt;</span> Downloading quill-0.1.dmg
+<span class="muted">==&gt;</span> Installing Cask quill
+<span class="success">✓</span> Quill is ready in your menu bar.</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta shell section">
+        <div>
+          <p class="eyebrow">Less typing. More thinking.</p>
+          <h2>Give your keyboard<br />a quiet day off.</h2>
+        </div>
+        <a class="download-button" href="#top">
+          <span><small>Free & open source</small>Get Quill for macOS</span>
+          <span class="download-arrow" aria-hidden="true">↓</span>
+        </a>
+      </section>
+    </main>
+
+    <footer class="site-footer shell">
+      <a class="brand footer-brand" href="#top">
+        <svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true">
+          <rect width="36" height="36" rx="9" fill="currentColor" />
+          <path d="M26.8 8.5c-6.2 1.4-10.8 4.4-13.6 9.1a15.8 15.8 0 0 0-2.3 9.3l4.6-4.8 3.2-.2-2.4-1.3 3.4-3.6 3.3-.1-2.4-1.4c2.1-2.2 4.4-4.6 6.2-7Z" fill="#ddffc5" />
+          <path d="M9.9 29.3c3.4-5.3 7.3-10 11.8-14" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" />
+        </svg>
+        <span>Quill</span>
+      </a>
+      <p>Open-source voice typing for macOS.</p>
+      <div class="footer-links">
+        <a href="#open-source">GitHub <span aria-hidden="true">↗</span></a>
+        <a href="#privacy">Privacy</a>
+        <a href="#top">Docs</a>
+      </div>
+      <small>© 2026 Quill. Apache-2.0 / MIT.</small>
+    </footer>
+  </body>
+</html>
