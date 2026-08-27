@@ -29,4 +29,25 @@ final class AudioLevelMeterTests: XCTestCase {
         XCTAssertGreaterThan(level, 0.2)
         XCTAssertLessThan(level, 0.8)
     }
+
+    func testLevelUpdateLimiterCapsDeliveryRate() {
+        var limiter = AudioLevelUpdateLimiter(minimumInterval: .milliseconds(33))
+        let start = ContinuousClock.now
+
+        XCTAssertTrue(limiter.shouldDeliver(at: start))
+        XCTAssertFalse(limiter.shouldDeliver(at: start.advanced(by: .milliseconds(20))))
+        XCTAssertTrue(limiter.shouldDeliver(at: start.advanced(by: .milliseconds(34))))
+    }
+
+    func testLevelUpdateLimiterCanBeReset() {
+        var limiter = AudioLevelUpdateLimiter(minimumInterval: .seconds(1))
+        let start = ContinuousClock.now
+
+        XCTAssertTrue(limiter.shouldDeliver(at: start))
+        XCTAssertFalse(limiter.shouldDeliver(at: start))
+
+        limiter.reset()
+
+        XCTAssertTrue(limiter.shouldDeliver(at: start))
+    }
 }

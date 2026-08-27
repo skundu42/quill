@@ -67,6 +67,29 @@ enum AudioLevelMeter {
     }
 }
 
+struct AudioLevelUpdateLimiter {
+    let minimumInterval: Duration
+    private var lastDelivery: ContinuousClock.Instant?
+
+    init(minimumInterval: Duration = .milliseconds(33)) {
+        self.minimumInterval = minimumInterval
+    }
+
+    mutating func shouldDeliver(at instant: ContinuousClock.Instant = .now) -> Bool {
+        guard let lastDelivery else {
+            self.lastDelivery = instant
+            return true
+        }
+        guard lastDelivery.duration(to: instant) >= minimumInterval else { return false }
+        self.lastDelivery = instant
+        return true
+    }
+
+    mutating func reset() {
+        lastDelivery = nil
+    }
+}
+
 final class AudioRecorder: @unchecked Sendable {
     typealias ChunkHandler = @Sendable (Data) -> Void
     typealias LevelHandler = @Sendable (Double) -> Void
@@ -82,9 +105,20 @@ final class AudioRecorder: @unchecked Sendable {
     private var configurationObserver: NSObjectProtocol?
     private var activeSelection: ActiveAudioInputSelection?
     private var smoothedLevel = 0.0
+    private var levelUpdateLimiter = AudioLevelUpdateLimiter()
     private let lock = NSLock()
+    private let lifecycleLock = NSLock()
     private let deliveryQueue = DispatchQueue(label: "com.quill.voice.audio-delivery")
     private var running = false
+
+    private struct PreparedInput {
+        let resolution: AudioInputResolution
+        let selection: ActiveAudioInputSelection
+        let inputNode: AVAudioInputNode
+        let inputFormat: AVAudioFormat
+        let targetFormat: AVAudioFormat
+        let converter: AVAudioConverter
+    }
 
     init(deviceProvider: any AudioInputDeviceProviding = CoreAudioInputDeviceProvider()) {
         self.deviceProvider = deviceProvider
@@ -95,23 +129,125 @@ final class AudioRecorder: @unchecked Sendable {
     }
 
     @discardableResult
+    func prewarm(microphone: MicrophonePreference?) throws -> AudioInputResolution {
+        try lifecycleLock.withLock {
+            if isRunning {
+                return try resolveInput(microphone: microphone).0
+            }
+            let prepared = try prepareInput(microphone: microphone)
+            engine.prepare()
+            return prepared.resolution
+        }
+    }
+
+    @discardableResult
     func start(
         microphone: MicrophonePreference?,
         onChunk: @escaping ChunkHandler,
         onLevel: @escaping LevelHandler,
         onError: @escaping ErrorHandler
     ) throws -> AudioInputResolution {
+        try lifecycleLock.withLock {
+            try startLocked(
+                microphone: microphone,
+                onChunk: onChunk,
+                onLevel: onLevel,
+                onError: onError
+            )
+        }
+    }
+
+    private func startLocked(
+        microphone: MicrophonePreference?,
+        onChunk: @escaping ChunkHandler,
+        onLevel: @escaping LevelHandler,
+        onError: @escaping ErrorHandler
+    ) throws -> AudioInputResolution {
         if isRunning {
-            let devices = try deviceProvider.inputDevices()
-            let defaultID = try deviceProvider.defaultInputDeviceID()
-            guard let resolution = AudioInputResolution.resolve(
-                preference: microphone,
-                devices: devices,
-                defaultDeviceID: defaultID
-            ) else { throw AudioRecorderError.unavailableInput }
-            return resolution
+            return try resolveInput(microphone: microphone).0
         }
 
+        let prepared = try prepareInput(microphone: microphone)
+
+        lock.withLock {
+            converter = prepared.converter
+            chunkHandler = onChunk
+            levelHandler = onLevel
+            errorHandler = onError
+            activeSelection = prepared.selection
+            smoothedLevel = 0
+            levelUpdateLimiter.reset()
+            accumulator = AudioChunkAccumulator()
+            running = true
+        }
+
+        prepared.inputNode.installTap(onBus: 0, bufferSize: 1_024, format: prepared.inputFormat) { [weak self] buffer, _ in
+            self?.convertAndChunk(buffer, targetFormat: prepared.targetFormat)
+        }
+
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            prepared.inputNode.removeTap(onBus: 0)
+            lock.withLock {
+                running = false
+                self.converter = nil
+                chunkHandler = nil
+                levelHandler = nil
+                errorHandler = nil
+                activeSelection = nil
+            }
+            throw error
+        }
+
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleInputConfigurationChange()
+        }
+        return prepared.resolution
+    }
+
+    func stop() {
+        lifecycleLock.withLock {
+            stopLocked()
+        }
+    }
+
+    private func stopLocked() {
+        guard isRunning else { return }
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+            self.configurationObserver = nil
+        }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        let delivery = lock.withLock { () -> (Data?, ChunkHandler?) in
+            running = false
+            let remainder = accumulator.flush()
+            let handler = chunkHandler
+            converter = nil
+            chunkHandler = nil
+            levelHandler = nil
+            errorHandler = nil
+            activeSelection = nil
+            smoothedLevel = 0
+            levelUpdateLimiter.reset()
+            return (remainder, handler)
+        }
+        deliveryQueue.sync {
+            if let remainder = delivery.0 {
+                delivery.1?(remainder)
+            }
+        }
+    }
+
+    private func resolveInput(
+        microphone: MicrophonePreference?
+    ) throws -> (AudioInputResolution, ActiveAudioInputSelection) {
         let devices = try deviceProvider.inputDevices()
         let defaultID = try deviceProvider.defaultInputDeviceID()
         guard let resolution = AudioInputResolution.resolve(
@@ -119,12 +255,14 @@ final class AudioRecorder: @unchecked Sendable {
             devices: devices,
             defaultDeviceID: defaultID
         ) else { throw AudioRecorderError.unavailableInput }
-
-        let selection = ActiveAudioInputSelection(
-            preference: microphone,
-            resolution: resolution
+        return (
+            resolution,
+            ActiveAudioInputSelection(preference: microphone, resolution: resolution)
         )
+    }
 
+    private func prepareInput(microphone: MicrophonePreference?) throws -> PreparedInput {
+        let (resolution, selection) = try resolveInput(microphone: microphone)
         let inputNode = engine.inputNode
         guard let audioUnit = inputNode.audioUnit else {
             throw AudioRecorderError.unavailableInput
@@ -157,73 +295,14 @@ final class AudioRecorder: @unchecked Sendable {
         ), let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             throw AudioRecorderError.unsupportedFormat
         }
-
-        lock.withLock {
-            self.converter = converter
-            chunkHandler = onChunk
-            levelHandler = onLevel
-            errorHandler = onError
-            activeSelection = selection
-            smoothedLevel = 0
-            accumulator = AudioChunkAccumulator()
-            running = true
-        }
-
-        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
-            self?.convertAndChunk(buffer, targetFormat: targetFormat)
-        }
-
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            inputNode.removeTap(onBus: 0)
-            lock.withLock {
-                running = false
-                self.converter = nil
-                chunkHandler = nil
-                levelHandler = nil
-                errorHandler = nil
-                activeSelection = nil
-            }
-            throw error
-        }
-
-        configurationObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange,
-            object: engine,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleInputConfigurationChange()
-        }
-        return resolution
-    }
-
-    func stop() {
-        guard isRunning else { return }
-        if let configurationObserver {
-            NotificationCenter.default.removeObserver(configurationObserver)
-            self.configurationObserver = nil
-        }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        let delivery = lock.withLock { () -> (Data?, ChunkHandler?) in
-            running = false
-            let remainder = accumulator.flush()
-            let handler = chunkHandler
-            converter = nil
-            chunkHandler = nil
-            levelHandler = nil
-            errorHandler = nil
-            activeSelection = nil
-            smoothedLevel = 0
-            return (remainder, handler)
-        }
-        deliveryQueue.sync {
-            if let remainder = delivery.0 {
-                delivery.1?(remainder)
-            }
-        }
+        return PreparedInput(
+            resolution: resolution,
+            selection: selection,
+            inputNode: inputNode,
+            inputFormat: inputFormat,
+            targetFormat: targetFormat,
+            converter: converter
+        )
     }
 
     private func handleInputConfigurationChange() {
@@ -312,9 +391,10 @@ final class AudioRecorder: @unchecked Sendable {
 
             let data = Data(bytes: samples, count: Int(outputBuffer.frameLength) * MemoryLayout<Int16>.size)
             let chunks = accumulator.append(data)
-            let level = smoothedLevel
+            let level = levelUpdateLimiter.shouldDeliver() ? smoothedLevel : nil
+            guard level != nil || !chunks.isEmpty else { return }
             deliveryQueue.async {
-                levelHandler(level)
+                if let level { levelHandler(level) }
                 for chunk in chunks {
                     chunkHandler(chunk)
                 }

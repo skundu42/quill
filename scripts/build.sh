@@ -45,6 +45,12 @@ if [ -n "${QUILL_BUILD_NUMBER:-}" ]; then
     "$DIST_DIR/Quill.app/Contents/Info.plist"
 fi
 
+if [ -n "${QUILL_RELEASE_LABEL:-}" ]; then
+  /usr/libexec/PlistBuddy \
+    -c "Add :QuillReleaseLabel string $QUILL_RELEASE_LABEL" \
+    "$DIST_DIR/Quill.app/Contents/Info.plist"
+fi
+
 MICROPHONE_USAGE_DESCRIPTION=$(/usr/libexec/PlistBuddy \
   -c "Print :NSMicrophoneUsageDescription" \
   "$DIST_DIR/Quill.app/Contents/Info.plist" 2>/dev/null || true)

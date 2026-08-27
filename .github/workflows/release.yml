@@ -8,7 +8,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: quill-release-${{ github.event.release.tag_name }}
+  # Release jobs share one moving RC appcast, so they must publish serially.
+  group: quill-release-publisher
   cancel-in-progress: false
 
 jobs:
@@ -20,6 +21,15 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+
+      - name: Validate release metadata
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          ./scripts/test-release-metadata.sh
+          ./scripts/release-metadata.sh "$RELEASE_TAG" "$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
 
       - name: Validate release secrets
         env:
@@ -85,16 +95,12 @@ jobs:
 
       - name: Build signed universal app
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          MARKETING_VERSION: ${{ steps.release.outputs.marketing_version }}
+          RELEASE_LABEL: ${{ steps.release.outputs.release_label }}
         run: |
-          RELEASE_VERSION=${RELEASE_TAG#v}
-          if ! printf '%s' "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Release tags must use vX.Y.Z or X.Y.Z format" >&2
-            exit 1
-          fi
-
-          QUILL_MARKETING_VERSION="$RELEASE_VERSION" \
+          QUILL_MARKETING_VERSION="$MARKETING_VERSION" \
           QUILL_BUILD_NUMBER="$GITHUB_RUN_NUMBER" \
+          QUILL_RELEASE_LABEL="$RELEASE_LABEL" \
           ./scripts/build.sh
 
       - name: Create and sign DMG
@@ -131,13 +137,16 @@ jobs:
       - name: Generate signed Sparkle appcast
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_CHANNEL: ${{ steps.release.outputs.release_channel }}
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           SPARKLE_VERSION=2.9.6
           SPARKLE_ARCHIVE="$RUNNER_TEMP/Sparkle-$SPARKLE_VERSION.tar.xz"
           SPARKLE_TOOLS="$RUNNER_TEMP/sparkle-tools"
           APPCAST_DIR="$RUNNER_TEMP/quill-appcast"
           KEY_FILE="$RUNNER_TEMP/quill-sparkle-ed-key"
+          RC_CHANNEL_TAG=quill-rc-channel
 
           curl --fail --location --silent --show-error \
             --output "$SPARKLE_ARCHIVE" \
@@ -145,17 +154,38 @@ jobs:
           mkdir -p "$SPARKLE_TOOLS" "$APPCAST_DIR"
           tar -xJf "$SPARKLE_ARCHIVE" -C "$SPARKLE_TOOLS"
 
+          # Seed generation with the moving channel feed so RC testers see the
+          # full path from stable -> RC -> final, while stable clients filter
+          # out entries marked with the rc Sparkle channel.
+          if gh release view "$RC_CHANNEL_TAG" >/dev/null 2>&1; then
+            gh release download "$RC_CHANNEL_TAG" \
+              --pattern appcast.xml \
+              --dir "$APPCAST_DIR" \
+              --clobber
+          fi
+
           DMG_NAME=$(basename "$DMG_PATH")
           cp "$DMG_PATH" "$APPCAST_DIR/$DMG_NAME"
           printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
           trap 'rm -P "$KEY_FILE" 2>/dev/null || true' EXIT
 
-          "$SPARKLE_TOOLS/bin/generate_appcast" \
-            --ed-key-file "$KEY_FILE" \
-            --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
-            --link "https://github.com/${{ github.repository }}/releases" \
-            "$APPCAST_DIR"
+          if [ "$RELEASE_CHANNEL" = rc ]; then
+            "$SPARKLE_TOOLS/bin/generate_appcast" \
+              --ed-key-file "$KEY_FILE" \
+              --channel rc \
+              --maximum-versions 5 \
+              --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
+              --link "https://github.com/${{ github.repository }}/releases" \
+              "$APPCAST_DIR"
+          else
+            "$SPARKLE_TOOLS/bin/generate_appcast" \
+              --ed-key-file "$KEY_FILE" \
+              --maximum-versions 5 \
+              --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
+              --link "https://github.com/${{ github.repository }}/releases" \
+              "$APPCAST_DIR"
+          fi
 
           rm -P "$KEY_FILE"
           trap - EXIT
@@ -170,6 +200,21 @@ jobs:
           LATEST_DMG_PATH="$GITHUB_WORKSPACE/dist/Quill-macOS.dmg"
           cp "$DMG_PATH" "$LATEST_DMG_PATH"
           gh release upload "$RELEASE_TAG" "$DMG_PATH" "$LATEST_DMG_PATH" "$APPCAST_PATH" --clobber
+
+      - name: Publish moving RC channel appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RC_CHANNEL_TAG=quill-rc-channel
+          if ! gh release view "$RC_CHANNEL_TAG" >/dev/null 2>&1; then
+            gh release create "$RC_CHANNEL_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "Quill release-candidate update channel" \
+              --notes "Machine-managed Sparkle feed for opted-in release-candidate testers." \
+              --prerelease
+          fi
+
+          gh release upload "$RC_CHANNEL_TAG" "$APPCAST_PATH" --clobber
 
       - name: Remove temporary signing keychain
         if: always()

@@ -21,6 +21,11 @@ enum TextInsertionError: LocalizedError {
 struct TextInsertionTarget {
     let processIdentifier: pid_t
     let focusedElement: AXUIElement?
+    let pasteEventClassification: Task<Bool, Never>?
+
+    func usesPasteEvent() async -> Bool {
+        await pasteEventClassification?.value ?? false
+    }
 }
 
 @MainActor
@@ -32,7 +37,17 @@ protocol TextInsertionServing: AnyObject {
 
 @MainActor
 final class TextInsertionService: TextInsertionServing {
+    private typealias PasteboardSnapshot = [[NSPasteboard.PasteboardType: Data]]
+
+    private struct PendingClipboardRestoration {
+        let generation: UUID
+        let snapshot: PasteboardSnapshot
+        let transcriptChangeCount: Int
+    }
+
     private var lastExternalTarget: TextInsertionTarget?
+    private var pendingClipboardRestoration: PendingClipboardRestoration?
+    private var clipboardRestorationTask: Task<Void, Never>?
 
     func rememberFrontmostTarget() {
         _ = captureTarget()
@@ -60,9 +75,20 @@ final class TextInsertionService: TextInsertionServing {
         } else {
             focusedElement = nil
         }
+        if let lastExternalTarget,
+           lastExternalTarget.processIdentifier == application.processIdentifier,
+           elementsAreEqual(lastExternalTarget.focusedElement, focusedElement) {
+            return lastExternalTarget
+        }
+
         let target = TextInsertionTarget(
             processIdentifier: application.processIdentifier,
-            focusedElement: focusedElement
+            focusedElement: focusedElement,
+            pasteEventClassification: focusedElement.map { element in
+                Task.detached(priority: .userInitiated) {
+                    Self.isInsideWebArea(element)
+                }
+            }
         )
         lastExternalTarget = target
         return target
@@ -96,15 +122,23 @@ final class TextInsertionService: TextInsertionServing {
             try await Task.sleep(for: .milliseconds(150))
         }
 
-        let originalFocusStatus = target.focusedElement.map {
-            AXUIElementSetAttributeValue(
-                $0,
-                kAXFocusedAttribute as CFString,
-                kCFBooleanTrue
-            )
+        var focusedElement = currentFocusedElement(for: target.processIdentifier)
+        var restoredFocus = false
+        if let originalElement = target.focusedElement,
+           !elementsAreEqual(focusedElement, originalElement),
+           AXUIElementSetAttributeValue(
+               originalElement,
+               kAXFocusedAttribute as CFString,
+               kCFBooleanTrue
+           ) == .success {
+            focusedElement = originalElement
+            restoredFocus = true
         }
-        let focusedElement = currentFocusedElement(for: target.processIdentifier)
-            ?? (originalFocusStatus == .success ? target.focusedElement : nil)
+
+        if restoredFocus {
+            try await Task.sleep(for: .milliseconds(50))
+            focusedElement = currentFocusedElement(for: target.processIdentifier) ?? focusedElement
+        }
 
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
               let focusedElement else {
@@ -112,17 +146,11 @@ final class TextInsertionService: TextInsertionServing {
             throw TextInsertionError.targetUnavailableCopiedToClipboard
         }
 
-        try await Task.sleep(for: .milliseconds(50))
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else {
-            try copyToClipboard(text)
-            throw TextInsertionError.targetUnavailableCopiedToClipboard
-        }
-
         // Native controls reliably support replacing the selected text through
         // Accessibility. Web editors need a real paste event so their input model
-        // receives the corresponding DOM event. Choose by the focused element's
-        // accessibility hierarchy rather than by application identity.
-        let usesPasteEvent = isInsideWebArea(focusedElement)
+        // receives the corresponding DOM event. The target's path is classified
+        // when dictation starts so insertion does not synchronously walk the AX tree.
+        let usesPasteEvent = await target.usesPasteEvent()
         QuillLogger.insertion.info(
             "Insertion path: \(usesPasteEvent ? "paste event" : "accessibility", privacy: .public)"
         )
@@ -131,10 +159,10 @@ final class TextInsertionService: TextInsertionServing {
                focusedElement,
                kAXSelectedTextAttribute as CFString,
                text as CFString
-           ) == .success {
+            ) == .success {
             return
         }
-        try await pasteWithClipboardPreservation(text)
+        try pasteWithClipboardPreservation(text)
     }
 
     private func currentFocusedElement(for processIdentifier: pid_t) -> AXUIElement? {
@@ -152,7 +180,7 @@ final class TextInsertionService: TextInsertionServing {
         return unsafeBitCast(focusedValue, to: AXUIElement.self)
     }
 
-    private func isInsideWebArea(_ element: AXUIElement) -> Bool {
+    nonisolated private static func isInsideWebArea(_ element: AXUIElement) -> Bool {
         var current: AXUIElement? = element
         // Bound the walk in case an application exposes a malformed hierarchy.
         for _ in 0..<24 {
@@ -176,7 +204,7 @@ final class TextInsertionService: TextInsertionServing {
         return false
     }
 
-    private func stringAttribute(_ attribute: CFString, from element: AXUIElement) -> String? {
+    nonisolated private static func stringAttribute(_ attribute: CFString, from element: AXUIElement) -> String? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
               let value,
@@ -186,7 +214,16 @@ final class TextInsertionService: TextInsertionServing {
         return value as? String
     }
 
+    private func elementsAreEqual(_ lhs: AXUIElement?, _ rhs: AXUIElement?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil): true
+        case let (lhs?, rhs?): CFEqual(lhs, rhs)
+        default: false
+        }
+    }
+
     private func copyToClipboard(_ text: String) throws {
+        cancelPendingClipboardRestoration()
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         guard pasteboard.setString(text, forType: .string) else {
@@ -194,9 +231,16 @@ final class TextInsertionService: TextInsertionServing {
         }
     }
 
-    private func pasteWithClipboardPreservation(_ text: String) async throws {
+    private func pasteWithClipboardPreservation(_ text: String) throws {
         let pasteboard = NSPasteboard.general
-        let snapshot = snapshotPasteboard(pasteboard)
+        let snapshot: PasteboardSnapshot
+        if let pendingClipboardRestoration,
+           pasteboard.changeCount == pendingClipboardRestoration.transcriptChangeCount {
+            snapshot = pendingClipboardRestoration.snapshot
+        } else {
+            snapshot = snapshotPasteboard(pasteboard)
+        }
+        cancelPendingClipboardRestoration()
 
         pasteboard.clearContents()
         guard pasteboard.setString(text, forType: .string) else {
@@ -219,13 +263,41 @@ final class TextInsertionService: TextInsertionServing {
         keyUp.post(tap: .cghidEventTap)
 
         let transcriptChangeCount = pasteboard.changeCount
-        try await Task.sleep(for: .milliseconds(350))
-        if pasteboard.changeCount == transcriptChangeCount {
-            restorePasteboard(snapshot, to: pasteboard)
+        let generation = UUID()
+        pendingClipboardRestoration = PendingClipboardRestoration(
+            generation: generation,
+            snapshot: snapshot,
+            transcriptChangeCount: transcriptChangeCount
+        )
+        clipboardRestorationTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+            } catch {
+                return
+            }
+            self?.restoreClipboardIfUnchanged(generation: generation)
         }
     }
 
-    private func snapshotPasteboard(_ pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
+    private func restoreClipboardIfUnchanged(generation: UUID) {
+        guard let pendingClipboardRestoration,
+              pendingClipboardRestoration.generation == generation else { return }
+
+        let pasteboard = NSPasteboard.general
+        if pasteboard.changeCount == pendingClipboardRestoration.transcriptChangeCount {
+            restorePasteboard(pendingClipboardRestoration.snapshot, to: pasteboard)
+        }
+        self.pendingClipboardRestoration = nil
+        clipboardRestorationTask = nil
+    }
+
+    private func cancelPendingClipboardRestoration() {
+        clipboardRestorationTask?.cancel()
+        clipboardRestorationTask = nil
+        pendingClipboardRestoration = nil
+    }
+
+    private func snapshotPasteboard(_ pasteboard: NSPasteboard) -> PasteboardSnapshot {
         (pasteboard.pasteboardItems ?? []).map { item in
             Dictionary(uniqueKeysWithValues: item.types.compactMap { type in
                 item.data(forType: type).map { (type, $0) }
@@ -233,7 +305,7 @@ final class TextInsertionService: TextInsertionServing {
         }
     }
 
-    private func restorePasteboard(_ snapshot: [[NSPasteboard.PasteboardType: Data]], to pasteboard: NSPasteboard) {
+    private func restorePasteboard(_ snapshot: PasteboardSnapshot, to pasteboard: NSPasteboard) {
         pasteboard.clearContents()
         let items = snapshot.map { values -> NSPasteboardItem in
             let item = NSPasteboardItem()

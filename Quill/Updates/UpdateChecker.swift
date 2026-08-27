@@ -2,12 +2,46 @@ import Combine
 import Foundation
 @preconcurrency import Sparkle
 
+enum UpdateChannel: String, Equatable {
+    case stable
+    case releaseCandidate = "rc"
+}
+
+struct UpdateConfiguration: Equatable {
+    static let userDefaultsKey = "updateChannel"
+
+    let channel: UpdateChannel
+    let feedURL: String?
+
+    var allowedChannels: Set<String> {
+        channel == .releaseCandidate ? [UpdateChannel.releaseCandidate.rawValue] : []
+    }
+
+    static func resolve(
+        environment: [String: String],
+        defaults: UserDefaults,
+        releaseCandidateFeedURL: String?
+    ) -> UpdateConfiguration {
+        let requestedChannel = environment["QUILL_UPDATE_CHANNEL"]
+            ?? defaults.string(forKey: userDefaultsKey)
+        let channel: UpdateChannel = requestedChannel?.lowercased() == UpdateChannel.releaseCandidate.rawValue
+            ? .releaseCandidate
+            : .stable
+        let explicitFeedURL = environment["QUILL_UPDATE_FEED"]?.nilIfEmpty
+
+        return UpdateConfiguration(
+            channel: channel,
+            feedURL: explicitFeedURL ?? (channel == .releaseCandidate ? releaseCandidateFeedURL : nil)
+        )
+    }
+}
+
 @MainActor
 final class UpdateChecker: ObservableObject {
     static let shared = UpdateChecker()
 
     private let controller: SPUStandardUpdaterController
-    private let feedOverride = FeedOverrideDelegate()
+    private let feedDelegate: UpdateFeedDelegate
     private var canCheckObservation: NSKeyValueObservation?
 
     @Published private(set) var canCheckForUpdates = false
@@ -19,7 +53,10 @@ final class UpdateChecker: ObservableObject {
     }
 
     var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+        guard let label = Bundle.main.object(forInfoDictionaryKey: "QuillReleaseLabel") as? String,
+              !label.isEmpty else { return version }
+        return "\(version) \(label)"
     }
 
     var lastUpdateCheck: Date? {
@@ -27,12 +64,18 @@ final class UpdateChecker: ObservableObject {
     }
 
     private init() {
+        let configuration = UpdateConfiguration.resolve(
+            environment: ProcessInfo.processInfo.environment,
+            defaults: .standard,
+            releaseCandidateFeedURL: Bundle.main.object(forInfoDictionaryKey: "QuillRCFeedURL") as? String
+        )
+        feedDelegate = UpdateFeedDelegate(configuration: configuration)
         controller = SPUStandardUpdaterController(
             startingUpdater: Self.shouldStartUpdater(
                 isRunningTests: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil,
                 environment: ProcessInfo.processInfo.environment
             ),
-            updaterDelegate: feedOverride,
+            updaterDelegate: feedDelegate,
             userDriverDelegate: nil
         )
         automaticUpdatesEnabled = controller.updater.automaticallyChecksForUpdates
@@ -59,14 +102,29 @@ final class UpdateChecker: ObservableObject {
         guard !isRunningTests else { return false }
         #if DEBUG
         return environment["QUILL_UPDATE_FEED"] != nil
+            || environment["QUILL_UPDATE_CHANNEL"]?.lowercased() == UpdateChannel.releaseCandidate.rawValue
         #else
         return true
         #endif
     }
 }
 
-private final class FeedOverrideDelegate: NSObject, SPUUpdaterDelegate {
-    func feedURLString(for updater: SPUUpdater) -> String? {
-        ProcessInfo.processInfo.environment["QUILL_UPDATE_FEED"]
+private final class UpdateFeedDelegate: NSObject, SPUUpdaterDelegate {
+    private let configuration: UpdateConfiguration
+
+    init(configuration: UpdateConfiguration) {
+        self.configuration = configuration
     }
+
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        configuration.feedURL
+    }
+
+    func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+        configuration.allowedChannels
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
