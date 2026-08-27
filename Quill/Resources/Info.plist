@@ -28,5 +28,17 @@
 	<string>Quill needs microphone access to turn your speech into text.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/skundu42/quill/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>JnQiQ6lmNjzBLSNkJK12znUZYGsQ0N/7qe1dXltEYFg=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>21600</integer>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

@@ -51,6 +51,7 @@ private enum QuillDestination: String, CaseIterable, Identifiable {
 }
 
 private struct QuillSidebar: View {
+    @EnvironmentObject private var updateChecker: UpdateChecker
     @Binding var selection: QuillDestination
 
     var body: some View {
@@ -97,10 +98,24 @@ private struct QuillSidebar: View {
 
             Spacer()
 
-            Text("Your stats stay on this Mac")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(0.4))
-                .padding(18)
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    updateChecker.checkManually()
+                } label: {
+                    Label("Check for updates", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.68))
+                .disabled(!updateChecker.canCheckForUpdates)
+
+                Text("Version \(updateChecker.currentVersion)")
+                Text("Your stats stay on this Mac")
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.white.opacity(0.4))
+            .padding(18)
         }
         .background(QuillBrand.ink)
     }
@@ -248,6 +263,7 @@ private struct HomeView: View {
 
 private struct DictationSettingsView: View {
     @EnvironmentObject private var preferences: AppPreferences
+    @EnvironmentObject private var updateChecker: UpdateChecker
 
     var body: some View {
         QuillPage(title: "Dictation", subtitle: "Make Quill work the way you speak.") {
@@ -314,6 +330,14 @@ private struct DictationSettingsView: View {
                         set: { preferences.setLaunchAtLogin($0) }
                     ))
                     .labelsHidden()
+                }
+                QuillDivider()
+                QuillSettingRow(
+                    title: "Automatic updates",
+                    detail: "Download signed releases and install them when Quill quits"
+                ) {
+                    Toggle("", isOn: $updateChecker.automaticUpdatesEnabled)
+                        .labelsHidden()
                 }
                 if let error = preferences.launchAtLoginError {
                     Text(error)

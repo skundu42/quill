@@ -169,7 +169,7 @@ svg { display: block; }
 }
 
 .app-identity { display: flex; align-items: center; gap: 10px; font-weight: 680; }
-.app-identity svg { width: 36px; height: 36px; }
+.app-identity .brand-mark { width: 36px; height: 36px; }
 .status-chip { padding: 8px 12px; border: 1px solid rgba(17,19,18,.25); border-radius: 999px; background: rgba(255,255,255,.55); font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: .08em; }
 
 .transcript-stage {

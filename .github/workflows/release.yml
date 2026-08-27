@@ -28,12 +28,14 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           : "${CERTIFICATE:?Missing DEVELOPER_ID_CERTIFICATE_BASE64}"
           : "${CERTIFICATE_PASSWORD:?Missing DEVELOPER_ID_CERTIFICATE_PASSWORD}"
           : "${APPLE_ID:?Missing APPLE_ID}"
           : "${APPLE_APP_PASSWORD:?Missing APPLE_APP_SPECIFIC_PASSWORD}"
           : "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID}"
+          : "${SPARKLE_ED_PRIVATE_KEY:?Missing SPARKLE_ED_PRIVATE_KEY}"
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -126,11 +128,45 @@ jobs:
           xcrun stapler validate "$DMG_PATH"
           codesign --verify --verbose=2 "$DMG_PATH"
 
-      - name: Attach DMG to release
+      - name: Generate signed Sparkle appcast
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          SPARKLE_VERSION=2.9.6
+          SPARKLE_ARCHIVE="$RUNNER_TEMP/Sparkle-$SPARKLE_VERSION.tar.xz"
+          SPARKLE_TOOLS="$RUNNER_TEMP/sparkle-tools"
+          APPCAST_DIR="$RUNNER_TEMP/quill-appcast"
+          KEY_FILE="$RUNNER_TEMP/quill-sparkle-ed-key"
+
+          curl --fail --location --silent --show-error \
+            --output "$SPARKLE_ARCHIVE" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+          mkdir -p "$SPARKLE_TOOLS" "$APPCAST_DIR"
+          tar -xJf "$SPARKLE_ARCHIVE" -C "$SPARKLE_TOOLS"
+
+          DMG_NAME=$(basename "$DMG_PATH")
+          cp "$DMG_PATH" "$APPCAST_DIR/$DMG_NAME"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          trap 'rm -P "$KEY_FILE" 2>/dev/null || true' EXIT
+
+          "$SPARKLE_TOOLS/bin/generate_appcast" \
+            --ed-key-file "$KEY_FILE" \
+            --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
+            --link "https://github.com/${{ github.repository }}/releases" \
+            "$APPCAST_DIR"
+
+          rm -P "$KEY_FILE"
+          trap - EXIT
+          test -f "$APPCAST_DIR/appcast.xml"
+          echo "APPCAST_PATH=$APPCAST_DIR/appcast.xml" >> "$GITHUB_ENV"
+
+      - name: Attach DMG and appcast to release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" "$DMG_PATH" --clobber
+        run: gh release upload "$RELEASE_TAG" "$DMG_PATH" "$APPCAST_PATH" --clobber
 
       - name: Remove temporary signing keychain
         if: always()

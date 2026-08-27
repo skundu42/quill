@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let preferences = AppPreferences.shared
     let stats = LocalStatsStore.shared
     let apiKeys = LocalAPIKeyStore.shared
+    let updateChecker = UpdateChecker.shared
     lazy var dictationController = DictationController(
         state: state,
         preferences: preferences,
@@ -22,12 +23,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var primaryMenuItem: NSMenuItem?
     private var statusMenuItem: NSMenuItem?
+    private var updateMenuItem: NSMenuItem?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
 
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(.regular)
         setupStatusItem()
 
         hotkeyManager.onPress = { [weak self] in self?.dictationController.start() }
@@ -45,15 +47,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] phase, level in self?.updateStatusItem(for: phase, level: level) }
             .store(in: &cancellables)
 
+        updateChecker.$canCheckForUpdates
+            .sink { [weak self] canCheck in
+                self?.updateMenuItem?.isEnabled = canCheck
+            }
+            .store(in: &cancellables)
+
         pillController = DictationPillPanelController(state: state, preferences: preferences) { [weak self] in
             self?.dictationController.cancel()
         }
 
-        if !preferences.onboardingComplete {
-            DispatchQueue.main.async { [weak self] in self?.showOnboarding() }
-        } else if !apiKeys.hasKey {
-            DispatchQueue.main.async { [weak self] in self?.showSettings() }
-        }
+        DispatchQueue.main.async { [weak self] in self?.showPrimaryWindow() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -61,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        showSettings()
+        showPrimaryWindow()
         return true
     }
 
@@ -77,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         heading.isEnabled = false
         menu.addItem(heading)
 
-        let open = NSMenuItem(title: "Open Quill", action: #selector(showSettings), keyEquivalent: "")
+        let open = NSMenuItem(title: "Open Quill", action: #selector(showPrimaryWindow), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
 
@@ -95,10 +99,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusMenuItem = status
 
         menu.addItem(.separator())
-        let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        let settings = NSMenuItem(title: "Settings…", action: #selector(showPrimaryWindow), keyEquivalent: ",")
         settings.keyEquivalentModifierMask = [.command]
         settings.target = self
         menu.addItem(settings)
+
+        let updates = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+        updates.target = self
+        updates.isEnabled = updateChecker.canCheckForUpdates
+        menu.addItem(updates)
+        updateMenuItem = updates
 
         let quit = NSMenuItem(title: "Quit Quill", action: #selector(quitQuill), keyEquivalent: "q")
         quit.keyEquivalentModifierMask = [.command]
@@ -133,7 +143,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dictationController.toggle()
     }
 
-    @objc func showSettings() {
+    @objc private func showPrimaryWindow() {
+        if preferences.onboardingComplete {
+            showSettings()
+        } else {
+            showOnboarding()
+        }
+    }
+
+    private func showSettings() {
         if let settingsWindow {
             settingsWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -146,6 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .environmentObject(state)
             .environmentObject(stats)
             .environmentObject(apiKeys)
+            .environmentObject(updateChecker)
             .frame(width: 820, height: 590)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 820, height: 590),
@@ -165,6 +184,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitQuill() {
         NSApp.terminate(nil)
+    }
+
+    @objc private func checkForUpdates() {
+        updateChecker.checkManually()
     }
 
     private func showOnboarding() {

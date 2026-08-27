@@ -26,9 +26,12 @@ xcuserdata/
 
 # Website dependencies and generated output
 node_modules/
+.next/
+out/
 .parcel-cache/
 .vite/
 coverage/
+*.tsbuildinfo
 
 # Local configuration and secrets
 .env

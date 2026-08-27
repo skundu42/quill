@@ -11,6 +11,10 @@ settings:
     SWIFT_STRICT_CONCURRENCY: minimal
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     DEVELOPMENT_TEAM: ""
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.9.6
 targets:
   Quill:
     type: application
@@ -33,6 +37,7 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Quill/Resources/Info.plist
     dependencies:
+      - package: Sparkle
       - sdk: AVFoundation.framework
       - sdk: Carbon.framework
       - sdk: ServiceManagement.framework

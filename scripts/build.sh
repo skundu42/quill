@@ -53,14 +53,48 @@ if [ -z "$MICROPHONE_USAGE_DESCRIPTION" ]; then
   exit 1
 fi
 
+SPARKLE_FRAMEWORK="$DIST_DIR/Quill.app/Contents/Frameworks/Sparkle.framework"
+if [ -d "$SPARKLE_FRAMEWORK" ]; then
+  SPARKLE_VERSION=$(readlink "$SPARKLE_FRAMEWORK/Versions/Current")
+  SPARKLE_CONTENTS="$SPARKLE_FRAMEWORK/Versions/$SPARKLE_VERSION"
+
+  for xpc in "$SPARKLE_CONTENTS"/XPCServices/*.xpc; do
+    [ -e "$xpc" ] || continue
+    codesign \
+      --force \
+      --options runtime \
+      --timestamp \
+      --preserve-metadata=entitlements \
+      --sign "$SIGNING_IDENTITY" \
+      "$xpc"
+  done
+
+  for helper in "$SPARKLE_CONTENTS/Autoupdate" "$SPARKLE_CONTENTS/Updater.app"; do
+    codesign \
+      --force \
+      --options runtime \
+      --timestamp \
+      --sign "$SIGNING_IDENTITY" \
+      "$helper"
+  done
+
+  codesign \
+    --force \
+    --options runtime \
+    --timestamp \
+    --sign "$SIGNING_IDENTITY" \
+    "$SPARKLE_FRAMEWORK"
+fi
+
 codesign \
   --force \
-  --deep \
   --options runtime \
   --timestamp \
   --sign "$SIGNING_IDENTITY" \
   --entitlements "$ROOT_DIR/Quill/Resources/Quill.entitlements" \
   "$DIST_DIR/Quill.app"
+
+codesign --verify --deep --strict --verbose=2 "$DIST_DIR/Quill.app"
 
 # Xcode registers its intermediate build with Launch Services. Remove that
 # duplicate identity so macOS resolves Quill to the installed application.

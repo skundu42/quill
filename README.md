@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="brand/quill-logo.svg" width="88" height="88" alt="Quill logo">
+  <img src="website/public/brand/quill-logo.svg" width="88" height="88" alt="Quill logo">
 </p>
 
 <h1 align="center">Quill</h1>
@@ -15,20 +15,20 @@
 
 ---
 
-Quill lives quietly in the menu bar and turns your voice into text across macOS. Place your cursor in an editable field, hold <kbd>⌥ Option</kbd> + <kbd>Space</kbd>, speak, and release. Your transcript appears at the original cursor so you can keep working without changing context.
+Place your cursor in an editable field, hold <kbd>⌥ Option</kbd> + <kbd>Space</kbd>, speak, and release. Your transcript appears at the original cursor so you can keep working without changing context.
 
 
-## Highlights
+## Features
 
-- **Dictate across macOS** — write in browsers, editors, messaging apps, and other standard text fields.
-- **Use the workflow you prefer** — choose hold-to-speak or press-to-start/stop dictation.
-- **Get cleaner text automatically** — Smart mode improves punctuation and readability; Verbatim mode stays closer to your exact words.
-- **Speak in your language** — let Quill detect the language or select a preferred language.
-- **Teach Quill your terminology** — add names, technical terms, acronyms, and product vocabulary.
-- **See what is happening** — a lightweight floating indicator responds while Quill listens and processes speech.
-- **Keep your clipboard intact** — text insertion preserves and restores the clipboard when a paste fallback is needed.
-- **Track simple local usage** — view daily and lifetime dictation and word counts without saving transcript history.
-- **Start when your Mac starts** — optionally launch Quill automatically at login.
+- **Dictate across macOS:** Write in browsers, editors, messaging apps, and other standard text fields.
+- **Use a complete Mac app:** Open Quill from Applications or the Dock, then keep it close from the menu bar.
+- **Use the workflow you prefer:** Choose hold-to-speak or press-to-start/stop dictation.
+- **Get cleaner text automatically:** Smart mode improves punctuation and readability; Verbatim mode stays closer to your exact words.
+- **Speak in your language:** Let Quill detect the language or select a preferred language.
+- **Teach Quill your terminology:** Add names, technical terms, acronyms, and product vocabulary.
+- **See what is happening:** A lightweight floating indicator responds while Quill listens and processes speech.
+- **Keep your clipboard intact:** Text insertion preserves and restores the clipboard when a paste fallback is needed.
+- **Track simple local usage:** View daily and lifetime dictation and word counts without saving transcript history.
 
 ## Getting started
 
@@ -36,6 +36,12 @@ Quill lives quietly in the menu bar and turns your voice into text across macOS.
 
 - A Mac running macOS 14 or later
 - A Gemini API key with access to the Live transcription model
+
+### Get a Gemini API key
+
+1. Open the [Google AI Studio API keys page](https://aistudio.google.com/app/apikey) and sign in with your Google account.
+2. Select **Create API key**, then choose or create a Google Cloud project when prompted.
+3. Copy the generated key. Quill will ask for it during onboarding.
 
 ### Set up Quill
 
@@ -56,6 +62,7 @@ Quill remains available from the menu bar. Open its settings to change the short
 | Cancel dictation | Press <kbd>Esc</kbd> |
 | Open Quill | Select the Quill icon in the menu bar |
 | Change the API key | Open **Settings → Privacy & Access** |
+| Check for updates | Choose **Quill → Check for Updates…** or use the button in the app sidebar |
 
 The shortcut can also be changed to <kbd>⌃ Control</kbd> + <kbd>Space</kbd> or <kbd>⇧ Shift</kbd> + <kbd>⌘ Command</kbd> + <kbd>Space</kbd>.
 
@@ -69,74 +76,13 @@ Quill is bring-your-own-key software. It does not run an intermediary transcript
 | Transcripts | Inserted at the active cursor. Transcript history is not stored; the most recent transcript remains in memory only until Quill quits. |
 | Usage statistics | Only dictation and word counts are stored locally on the Mac. They can be reset from **Privacy & Access**. |
 | Gemini API key | Stored at `~/Library/Application Support/Quill/api-key` with owner-only (`0600`) permissions. It is not stored in Keychain and remains until replaced. |
+| Update checks | Sparkle periodically reads Quill's public release feed from GitHub. System profiling is disabled, and no API key, transcript, or usage statistics are included. |
 
 Accessibility permission is used only to return focus to the original text field and insert the completed transcript. Microphone permission is used only while dictation is active.
 
-## Build from source
+## Development
 
-### Developer requirements
-
-- macOS 14 or later
-- Xcode 26 or later
-- [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-
-Generate the Xcode project:
-
-```sh
-xcodegen generate
-open Quill.xcodeproj
-```
-
-Select the **Quill** scheme, choose a development team under **Signing & Capabilities**, and run the app.
-
-To produce a universal release build, use:
-
-```sh
-./scripts/build.sh
-```
-
-The release script expects a valid **Developer ID Application** signing identity and writes the signed application to `dist/Quill.app`. Public distribution also requires notarization.
-
-### Automated GitHub releases
-
-Publishing a GitHub release with a tag such as `v0.1.0` automatically runs `.github/workflows/release.yml`. The workflow tests Quill, sets the app version from the release tag, builds a universal signed app, creates a drag-to-Applications DMG, notarizes it with Apple, and attaches it to the release.
-
-Configure these repository secrets under **Settings → Secrets and variables → Actions** before publishing the first release:
-
-| Secret | Value |
-| --- | --- |
-| `DEVELOPER_ID_CERTIFICATE_BASE64` | Base64-encoded `.p12` containing the Developer ID Application certificate and private key |
-| `DEVELOPER_ID_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12` file |
-| `APPLE_ID` | Apple ID used for notarization |
-| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for that Apple ID |
-| `APPLE_TEAM_ID` | Apple Developer Team ID associated with the certificate |
-
-Create the certificate secret on macOS with:
-
-```sh
-base64 -i DeveloperIDApplication.p12 | pbcopy
-```
-
-Paste the copied value into `DEVELOPER_ID_CERTIFICATE_BASE64`. The certificate itself remains ignored by Git through the existing `*.p12` rule.
-
-### Run the tests
-
-```sh
-xcodebuild \
-  -project Quill.xcodeproj \
-  -scheme Quill \
-  -destination 'platform=macOS' \
-  CODE_SIGNING_ALLOWED=NO \
-  test
-```
-
-## Website preview
-
-The Quill landing page is included in `index.html`, `styles.css`, and `app.js`. Preview it locally with:
-
-```sh
-python3 -m http.server 4173
-```
+See [Building Quill from Source](docs/BUILDING.md) for local development, testing, release signing, and GitHub publishing instructions.
 
 ## License
 
