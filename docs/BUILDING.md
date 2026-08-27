@@ -31,6 +31,32 @@ The release script expects a valid **Developer ID Application** signing identity
 
 Publishing a GitHub release with a tag such as `v0.1.0` automatically runs `.github/workflows/release.yml`. The workflow tests Quill, sets the app version from the release tag, builds a universal signed app, creates a drag-to-Applications DMG, notarizes it with Apple, signs it for Sparkle, generates `appcast.xml`, and attaches both files to the release.
 
+## Release candidates
+
+Release candidates use tags in the form `vX.Y.Z-rc.N`, starting at `rc.1`. Create the GitHub release as a **prerelease**. The workflow rejects an RC tag on a normal release and rejects a stable tag on a prerelease, preventing an accidental public rollout.
+
+The workflow publishes RC entries to Sparkle's `rc` channel and updates a permanent, prerelease-only `quill-rc-channel` feed. Normal Quill installations continue to use GitHub's latest stable release and do not allow the `rc` channel.
+
+To enroll a client from Terminal, quit Quill and run:
+
+```sh
+defaults write com.quill.voice updateChannel -string rc
+open -a Quill
+```
+
+Then choose **Check for Updates…**. Enrollment persists across launches, and an enrolled client receives RCs as well as the eventual stable release.
+
+To return the client to stable-only updates, quit Quill and run:
+
+```sh
+defaults delete com.quill.voice updateChannel
+open -a Quill
+```
+
+For a one-launch developer override, launch the executable directly with `QUILL_UPDATE_CHANNEL=rc`. `QUILL_UPDATE_FEED` remains available as the highest-priority custom-feed override.
+
+Publish releases in increasing order. Sparkle compares Quill's numeric GitHub Actions build number, so an older maintenance line must not be published after a newer release train has begun.
+
 Configure these repository secrets under **Settings → Secrets and variables → Actions** before publishing the first release:
 
 | Secret | Value |

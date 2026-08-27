@@ -30,6 +30,8 @@
 	<string>NSApplication</string>
 	<key>SUFeedURL</key>
 	<string>https://github.com/skundu42/quill/releases/latest/download/appcast.xml</string>
+	<key>QuillRCFeedURL</key>
+	<string>https://github.com/skundu42/quill/releases/download/quill-rc-channel/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>JnQiQ6lmNjzBLSNkJK12znUZYGsQ0N/7qe1dXltEYFg=</string>
 	<key>SUEnableAutomaticChecks</key>
