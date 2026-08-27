@@ -17,17 +17,18 @@
 
 Place your cursor in an editable field, hold <kbd>⌥ Option</kbd> + <kbd>Space</kbd>, speak, and release. Your transcript appears at the original cursor so you can keep working without changing context.
 
+<p align="center">
+  <img src="docs/images/quill-main-window.png" width="900" alt="Quill main app window showing dictation controls and local usage statistics">
+</p>
 
 ## Features
 
 - **Dictate across macOS:** Write in browsers, editors, messaging apps, and other standard text fields.
-- **Use a complete Mac app:** Open Quill from Applications or the Dock, then keep it close from the menu bar.
 - **Use the workflow you prefer:** Choose hold-to-speak or press-to-start/stop dictation.
 - **Get cleaner text automatically:** Smart mode improves punctuation and readability; Verbatim mode stays closer to your exact words.
 - **Speak in your language:** Let Quill detect the language or select a preferred language.
 - **Teach Quill your terminology:** Add names, technical terms, acronyms, and product vocabulary.
 - **See what is happening:** A lightweight floating indicator responds while Quill listens and processes speech.
-- **Keep your clipboard intact:** Text insertion preserves and restores the clipboard when a paste fallback is needed.
 - **Track simple local usage:** View daily and lifetime dictation and word counts without saving transcript history.
 
 ## Getting started

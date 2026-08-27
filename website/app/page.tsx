@@ -1,13 +1,62 @@
 import Image from "next/image";
 import { QuillLogo } from "@/components/QuillLogo";
 import { VoiceDemo } from "@/components/VoiceDemo";
+import { latestDmgUrl, siteConfig } from "@/app/site";
 
-const repositoryUrl = "https://github.com/skundu42/quill";
-const latestDmgUrl = `${repositoryUrl}/releases/latest/download/Quill-macOS.dmg`;
+const repositoryUrl = siteConfig.repositoryUrl;
+
+const structuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": `${siteConfig.url}/#website`,
+      url: siteConfig.url,
+      name: siteConfig.name,
+      description: siteConfig.description,
+      inLanguage: "en-US",
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": `${siteConfig.url}/#software`,
+      name: siteConfig.name,
+      url: siteConfig.url,
+      description: siteConfig.description,
+      applicationCategory: "ProductivityApplication",
+      applicationSubCategory: "Voice typing and dictation",
+      operatingSystem: "macOS 14 or later",
+      isAccessibleForFree: true,
+      downloadUrl: latestDmgUrl,
+      codeRepository: siteConfig.repositoryUrl,
+      license: "https://www.apache.org/licenses/LICENSE-2.0",
+      author: {
+        "@type": "Person",
+        name: siteConfig.authorName,
+        url: siteConfig.authorUrl,
+      },
+      offers: {
+        "@type": "Offer",
+        price: "0",
+        priceCurrency: "USD",
+      },
+      featureList: [
+        "System-wide voice typing",
+        "Gemini-powered smart transcription",
+        "Automatic language detection",
+        "Local usage statistics",
+        "Open-source macOS application",
+      ],
+    },
+  ],
+};
 
 export default function HomePage() {
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData).replace(/</g, "\\u003c") }}
+      />
       <a className="skip-link" href="#main">
         Skip to content
       </a>

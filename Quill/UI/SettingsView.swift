@@ -16,7 +16,9 @@ struct SettingsView: View {
             Group {
                 switch selection {
                 case .home:
-                    HomeView(controller: controller) { selection = .privacy }
+                    HomeView(controller: controller) { selection = .apiKey }
+                case .apiKey:
+                    APIKeyView()
                 case .dictation:
                     DictationSettingsView()
                 case .vocabulary:
@@ -34,6 +36,7 @@ struct SettingsView: View {
 
 private enum QuillDestination: String, CaseIterable, Identifiable {
     case home = "Home"
+    case apiKey = "API Key"
     case dictation = "Dictation"
     case vocabulary = "Vocabulary"
     case privacy = "Privacy & Access"
@@ -43,6 +46,7 @@ private enum QuillDestination: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .home: "house.fill"
+        case .apiKey: "key.fill"
         case .dictation: "waveform"
         case .vocabulary: "text.book.closed.fill"
         case .privacy: "lock.shield.fill"
@@ -111,7 +115,6 @@ private struct QuillSidebar: View {
                 .disabled(!updateChecker.canCheckForUpdates)
 
                 Text("Version \(updateChecker.currentVersion)")
-                Text("Your stats stay on this Mac")
             }
             .font(.system(size: 10, weight: .medium))
             .foregroundStyle(.white.opacity(0.4))
@@ -127,7 +130,7 @@ private struct HomeView: View {
     @EnvironmentObject private var stats: LocalStatsStore
     @EnvironmentObject private var apiKeys: LocalAPIKeyStore
     let controller: DictationController
-    let onOpenPrivacy: () -> Void
+    let onOpenAPIKey: () -> Void
 
     var body: some View {
         QuillPage(title: "Good to have you here", subtitle: "Quill is ready wherever your cursor is.") {
@@ -187,7 +190,7 @@ private struct HomeView: View {
                 .frame(width: 112, height: 42)
 
             Button(actionTitle) {
-                apiKeys.hasKey ? controller.toggle() : onOpenPrivacy()
+                apiKeys.hasKey ? controller.toggle() : onOpenAPIKey()
             }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -430,17 +433,64 @@ private struct VocabularyView: View {
     }
 }
 
-private struct PrivacyView: View {
-    @EnvironmentObject private var stats: LocalStatsStore
+private struct APIKeyView: View {
     @EnvironmentObject private var apiKeys: LocalAPIKeyStore
     @State private var apiKey = ""
     @State private var keyError: String?
+
+    var body: some View {
+        QuillPage(title: "API Key", subtitle: "Connect Quill to Gemini with your own key.") {
+            QuillCard(title: "Gemini API key") {
+                HStack(spacing: 10) {
+                    SecureField(apiKeys.hasKey ? "Paste a replacement key" : "Paste your API key", text: $apiKey)
+                        .textFieldStyle(.roundedBorder)
+                    Button(apiKeys.hasKey ? "Replace Key" : "Save Key", action: saveKey)
+                        .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                if apiKeys.hasKey {
+                    Label("Saved locally. It remains until you replace it.", systemImage: "key.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                }
+
+                if let keyError {
+                    Text(keyError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            QuillCard(title: "Get a key") {
+                Link(
+                    destination: URL(string: "https://aistudio.google.com/app/apikey")!
+                ) {
+                    Label("Open Google AI Studio", systemImage: "arrow.up.right.square")
+                }
+            }
+        }
+    }
+
+    private func saveKey() {
+        do {
+            try apiKeys.replace(with: apiKey)
+            apiKey = ""
+            keyError = nil
+        } catch {
+            keyError = error.localizedDescription
+        }
+    }
+}
+
+private struct PrivacyView: View {
+    @EnvironmentObject private var stats: LocalStatsStore
     @State private var microphoneGranted = Permissions.microphoneStatus == .authorized
     @State private var accessibilityGranted = Permissions.hasAccessibilityAccess
     @State private var showingResetConfirmation = false
 
     var body: some View {
-        QuillPage(title: "Privacy & Access", subtitle: "Your key, permissions, and local data—nothing else.") {
+        QuillPage(title: "Privacy & Access", subtitle: "Permissions and local data controls.") {
             QuillCard(title: "Permissions") {
                 PermissionAccessRow(
                     symbol: "mic.fill",
@@ -459,24 +509,6 @@ private struct PrivacyView: View {
                     granted: accessibilityGranted,
                     action: requestAccessibility
                 )
-            }
-
-            QuillCard(title: "Gemini API key") {
-                HStack(spacing: 10) {
-                    SecureField(apiKeys.hasKey ? "Paste a replacement key" : "Paste your API key", text: $apiKey)
-                        .textFieldStyle(.roundedBorder)
-                    Button(apiKeys.hasKey ? "Replace Key" : "Save Key", action: saveKey)
-                        .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                if apiKeys.hasKey {
-                    Label("Saved locally. It remains until you replace it.", systemImage: "key.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 4)
-                }
-                if let keyError {
-                    Text(keyError).font(.caption).foregroundStyle(.red)
-                }
             }
 
             QuillCard(title: "Local data") {
@@ -524,16 +556,6 @@ private struct PrivacyView: View {
     private func refresh() {
         microphoneGranted = Permissions.microphoneStatus == .authorized
         accessibilityGranted = Permissions.hasAccessibilityAccess
-    }
-
-    private func saveKey() {
-        do {
-            try apiKeys.replace(with: apiKey)
-            apiKey = ""
-            keyError = nil
-        } catch {
-            keyError = error.localizedDescription
-        }
     }
 
     private func openPrivacyPane(_ anchor: String) {

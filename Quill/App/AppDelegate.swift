@@ -166,8 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showSettings() {
         if let settingsWindow {
-            settingsWindow.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            presentCentered(settingsWindow)
             return
         }
 
@@ -189,10 +188,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.isReleasedWhenClosed = false
         window.contentViewController = NSHostingController(rootView: view)
         window.contentMinSize = NSSize(width: 760, height: 540)
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
         settingsWindow = window
+        presentCentered(window)
     }
 
     @objc private func quitQuill() {
@@ -206,8 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showOnboarding() {
         if let onboardingWindow {
-            onboardingWindow.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            presentCentered(onboardingWindow)
             return
         }
 
@@ -230,10 +226,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentMinSize = NSSize(width: 640, height: 520)
         window.contentMaxSize = NSSize(width: 640, height: 520)
         window.setContentSize(NSSize(width: 640, height: 520))
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
         onboardingWindow = window
+        presentCentered(window)
     }
 
     private func finishOnboarding() {
@@ -243,6 +237,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The window is retained for the app's lifetime and released safely at termination.
         onboardingWindow?.orderOut(nil)
         showSettings()
+    }
+
+    private func presentCentered(_ window: NSWindow) {
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
