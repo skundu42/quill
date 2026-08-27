@@ -1,0 +1,140 @@
+name: Release macOS DMG
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: quill-release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    name: Build, notarize, and upload
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Validate release secrets
+        env:
+          CERTIFICATE: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          : "${CERTIFICATE:?Missing DEVELOPER_ID_CERTIFICATE_BASE64}"
+          : "${CERTIFICATE_PASSWORD:?Missing DEVELOPER_ID_CERTIFICATE_PASSWORD}"
+          : "${APPLE_ID:?Missing APPLE_ID}"
+          : "${APPLE_APP_PASSWORD:?Missing APPLE_APP_SPECIFIC_PASSWORD}"
+          : "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID}"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/quill-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+
+          printf '%s' "$CERTIFICATE" | /usr/bin/base64 -D > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+            | head -n 1)
+          test -n "$SIGNING_IDENTITY"
+
+          echo "QUILL_SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Run tests
+        run: |
+          xcodegen generate
+          xcodebuild \
+            -project Quill.xcodeproj \
+            -scheme Quill \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      - name: Build signed universal app
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          RELEASE_VERSION=${RELEASE_TAG#v}
+          if ! printf '%s' "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Release tags must use vX.Y.Z or X.Y.Z format" >&2
+            exit 1
+          fi
+
+          QUILL_MARKETING_VERSION="$RELEASE_VERSION" \
+          QUILL_BUILD_NUMBER="$GITHUB_RUN_NUMBER" \
+          ./scripts/build.sh
+
+      - name: Create and sign DMG
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          SAFE_TAG=$(printf '%s' "$RELEASE_TAG" | tr -c 'A-Za-z0-9._-' '-')
+          DMG_PATH="$GITHUB_WORKSPACE/dist/Quill-${SAFE_TAG}-macOS.dmg"
+
+          ./scripts/create-dmg.sh "$GITHUB_WORKSPACE/dist/Quill.app" "$DMG_PATH"
+          codesign \
+            --force \
+            --timestamp \
+            --sign "$QUILL_SIGNING_IDENTITY" \
+            "$DMG_PATH"
+
+          echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
+
+      - name: Notarize DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          codesign --verify --verbose=2 "$DMG_PATH"
+
+      - name: Attach DMG to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" "$DMG_PATH" --clobber
+
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          if [ -n "${SIGNING_KEYCHAIN_PATH:-}" ] && [ -f "$SIGNING_KEYCHAIN_PATH" ]; then
+            security delete-keychain "$SIGNING_KEYCHAIN_PATH"
+          fi

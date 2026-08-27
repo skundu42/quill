@@ -33,6 +33,18 @@ xcodebuild \
 mkdir -p "$DIST_DIR"
 ditto "$DERIVED_DATA/Build/Products/Release/Quill.app" "$DIST_DIR/Quill.app"
 
+if [ -n "${QUILL_MARKETING_VERSION:-}" ]; then
+  /usr/libexec/PlistBuddy \
+    -c "Set :CFBundleShortVersionString $QUILL_MARKETING_VERSION" \
+    "$DIST_DIR/Quill.app/Contents/Info.plist"
+fi
+
+if [ -n "${QUILL_BUILD_NUMBER:-}" ]; then
+  /usr/libexec/PlistBuddy \
+    -c "Set :CFBundleVersion $QUILL_BUILD_NUMBER" \
+    "$DIST_DIR/Quill.app/Contents/Info.plist"
+fi
+
 MICROPHONE_USAGE_DESCRIPTION=$(/usr/libexec/PlistBuddy \
   -c "Print :NSMicrophoneUsageDescription" \
   "$DIST_DIR/Quill.app/Contents/Info.plist" 2>/dev/null || true)
