@@ -4,10 +4,15 @@ import Foundation
 struct TranscriptionCompletionGate {
     private(set) var activityEnded = false
     private(set) var finalTranscriptReceived = false
+    private(set) var turnCompleteReceived = false
     private(set) var completionStarted = false
 
     var isReady: Bool {
         activityEnded && finalTranscriptReceived
+    }
+
+    var canCompleteImmediately: Bool {
+        isReady && turnCompleteReceived
     }
 
     mutating func markActivityEnded() {
@@ -16,6 +21,10 @@ struct TranscriptionCompletionGate {
 
     mutating func receiveFinalTranscript() {
         finalTranscriptReceived = true
+    }
+
+    mutating func receiveTurnComplete() {
+        turnCompleteReceived = true
     }
 
     mutating func beginCompletion() -> Bool {
@@ -69,6 +78,19 @@ final class DictationController {
 
     func rememberInsertionTarget() {
         insertionService.rememberFrontmostTarget()
+    }
+
+    func prewarmAudio() {
+        guard Permissions.microphoneStatus == .authorized else { return }
+        let audioRecorder = audioRecorder
+        let microphone = preferences.microphonePreference
+        Task.detached(priority: .utility) {
+            do {
+                _ = try audioRecorder.prewarm(microphone: microphone)
+            } catch {
+                QuillLogger.audio.debug("Audio prewarm skipped: \(error.localizedDescription)")
+            }
+        }
     }
 
     func start() {
@@ -268,7 +290,7 @@ final class DictationController {
         completionGate.markActivityEnded()
         startFinalizationTimeout()
         if completionGate.isReady {
-            scheduleCompletion()
+            scheduleCompletion(immediately: completionGate.canCompleteImmediately)
         }
     }
 
@@ -286,26 +308,29 @@ final class DictationController {
             finalSegments.append(trimmed)
             state.interimTranscript = finalSegments.joined(separator: " ")
             completionGate.receiveFinalTranscript()
-            scheduleCompletion()
+            scheduleCompletion(immediately: completionGate.canCompleteImmediately)
         case .turnComplete:
             guard state.phase == .finalizing else { return }
-            // Conversational Live models can emit this event, but the dedicated
-            // transcription model's finalized input transcription is authoritative.
-            scheduleCompletion()
+            completionGate.receiveTurnComplete()
+            if completionGate.canCompleteImmediately {
+                scheduleCompletion(immediately: true)
+            }
         case .error(let message):
             fail(message)
         }
     }
 
-    private func scheduleCompletion() {
+    private func scheduleCompletion(immediately: Bool = false) {
         guard state.phase == .finalizing, completionGate.isReady else { return }
         completionTask?.cancel()
         let generation = sessionGeneration
         completionTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(750))
-            } catch {
-                return
+            if !immediately {
+                do {
+                    try await Task.sleep(for: .milliseconds(300))
+                } catch {
+                    return
+                }
             }
             guard let self, generation == self.sessionGeneration else { return }
             await self.completeTranscription()

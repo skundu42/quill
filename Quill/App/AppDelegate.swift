@@ -71,6 +71,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in self?.updatePasteLastAvailability() }
             .store(in: &cancellables)
 
+        preferences.$microphonePreference
+            .dropFirst()
+            .sink { [weak self] _ in self?.dictationController.prewarmAudio() }
+            .store(in: &cancellables)
+
         NSWorkspace.shared.notificationCenter
             .publisher(for: NSWorkspace.didActivateApplicationNotification)
             .compactMap { notification in
@@ -98,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = self?.dictationController.cancel()
         }
 
+        dictationController.prewarmAudio()
         DispatchQueue.main.async { [weak self] in self?.showPrimaryWindow() }
     }
 
