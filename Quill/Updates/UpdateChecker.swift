@@ -26,6 +26,10 @@ final class UpdateChecker: ObservableObject {
         controller.updater.lastUpdateCheckDate
     }
 
+    var isPreparingToRelaunch: Bool {
+        feedOverride.isPreparingToRelaunch
+    }
+
     private init() {
         controller = SPUStandardUpdaterController(
             startingUpdater: Self.shouldStartUpdater(
@@ -66,7 +70,13 @@ final class UpdateChecker: ObservableObject {
 }
 
 private final class FeedOverrideDelegate: NSObject, SPUUpdaterDelegate {
+    private(set) var isPreparingToRelaunch = false
+
     func feedURLString(for updater: SPUUpdater) -> String? {
         ProcessInfo.processInfo.environment["QUILL_UPDATE_FEED"]
+    }
+
+    func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
+        isPreparingToRelaunch = true
     }
 }

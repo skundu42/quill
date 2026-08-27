@@ -43,8 +43,13 @@ export default function HomePage() {
         <section className="hero shell" id="top">
           <div className="hero-copy">
             <div className="hero-meta">
-              <p className="eyebrow">Voice typing for macOS</p>
-              <span className="gemini-badge">
+              <span className="hero-badge open-source-badge">
+                <span className="open-source-mark" aria-hidden="true">
+                  &lt;/&gt;
+                </span>
+                Fully open source
+              </span>
+              <span className="hero-badge gemini-badge">
                 <Image
                   className="gemini-mark"
                   src="/brand/gemini-spark.png"

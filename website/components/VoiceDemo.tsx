@@ -9,8 +9,6 @@ import {
   useState,
 } from "react";
 
-import { QuillLogo } from "@/components/QuillLogo";
-
 const initialText = "Hey Sarah, can we move the meeting to Thursday at 3 PM?";
 const spokenText = "hey Sarah um can we move the meeting to tomorrow actually make that Thursday at 3";
 const polishedText = "Hey Sarah, can we move the meeting to Thursday at 3 PM?";
@@ -114,16 +112,6 @@ export function VoiceDemo() {
   return (
     <>
       <div className="voice-instrument" aria-label="Interactive Quill voice typing demonstration">
-        <div className="instrument-topbar">
-          <div className="app-identity">
-            <QuillLogo />
-            <span>Quill</span>
-          </div>
-          <span className="status-chip" aria-live="polite">
-            {stageLabels[stage]}
-          </span>
-        </div>
-
         <div className="transcript-stage">
           <span className="stage-label">In Slack</span>
           <p className="transcript" aria-live="polite">
