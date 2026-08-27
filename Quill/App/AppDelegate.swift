@@ -71,6 +71,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in self?.updatePasteLastAvailability() }
             .store(in: &cancellables)
 
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didActivateApplicationNotification)
+            .compactMap { notification in
+                notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            }
+            .filter { application in
+                application.processIdentifier != ProcessInfo.processInfo.processIdentifier
+            }
+            .sink { [weak self] _ in
+                // App activation is delivered before the click that activated the app
+                // has necessarily moved AX focus into the clicked text field.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    self?.dictationController.rememberInsertionTarget()
+                }
+            }
+            .store(in: &cancellables)
+
         updateChecker.$canCheckForUpdates
             .sink { [weak self] canCheck in
                 self?.updateMenuItem?.isEnabled = canCheck

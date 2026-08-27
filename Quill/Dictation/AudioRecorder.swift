@@ -80,6 +80,7 @@ final class AudioRecorder: @unchecked Sendable {
     private var levelHandler: LevelHandler?
     private var errorHandler: ErrorHandler?
     private var configurationObserver: NSObjectProtocol?
+    private var activeSelection: ActiveAudioInputSelection?
     private var smoothedLevel = 0.0
     private let lock = NSLock()
     private let deliveryQueue = DispatchQueue(label: "com.quill.voice.audio-delivery")
@@ -119,22 +120,29 @@ final class AudioRecorder: @unchecked Sendable {
             defaultDeviceID: defaultID
         ) else { throw AudioRecorderError.unavailableInput }
 
+        let selection = ActiveAudioInputSelection(
+            preference: microphone,
+            resolution: resolution
+        )
+
         let inputNode = engine.inputNode
         guard let audioUnit = inputNode.audioUnit else {
             throw AudioRecorderError.unavailableInput
         }
-        var deviceID = AudioDeviceID(resolution.device.deviceID)
-        let deviceStatus = AudioUnitSetProperty(
-            audioUnit,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &deviceID,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
-        )
-        guard deviceStatus == noErr else {
-            QuillLogger.audio.error("Unable to select audio input device: \(deviceStatus)")
-            throw AudioRecorderError.deviceConfigurationFailed
+        if selection.requiresExplicitDeviceConfiguration {
+            var deviceID = AudioDeviceID(selection.device.deviceID)
+            let deviceStatus = AudioUnitSetProperty(
+                audioUnit,
+                kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global,
+                0,
+                &deviceID,
+                UInt32(MemoryLayout<AudioDeviceID>.size)
+            )
+            guard deviceStatus == noErr else {
+                QuillLogger.audio.error("Unable to select audio input device: \(deviceStatus)")
+                throw AudioRecorderError.deviceConfigurationFailed
+            }
         }
 
         let inputFormat = inputNode.outputFormat(forBus: 0)
@@ -155,6 +163,7 @@ final class AudioRecorder: @unchecked Sendable {
             chunkHandler = onChunk
             levelHandler = onLevel
             errorHandler = onError
+            activeSelection = selection
             smoothedLevel = 0
             accumulator = AudioChunkAccumulator()
             running = true
@@ -175,6 +184,7 @@ final class AudioRecorder: @unchecked Sendable {
                 chunkHandler = nil
                 levelHandler = nil
                 errorHandler = nil
+                activeSelection = nil
             }
             throw error
         }
@@ -205,6 +215,7 @@ final class AudioRecorder: @unchecked Sendable {
             chunkHandler = nil
             levelHandler = nil
             errorHandler = nil
+            activeSelection = nil
             smoothedLevel = 0
             return (remainder, handler)
         }
@@ -217,9 +228,51 @@ final class AudioRecorder: @unchecked Sendable {
 
     private func handleInputConfigurationChange() {
         guard isRunning else { return }
+        if inputRouteIsUnchanged(), engine.isRunning {
+            QuillLogger.audio.debug("Ignoring audio configuration notification; input route is unchanged")
+            return
+        }
         let handler = lock.withLock { errorHandler }
         stop()
         handler?(.inputConfigurationChanged)
+    }
+
+    private func inputRouteIsUnchanged() -> Bool {
+        guard let selection = lock.withLock({ activeSelection }) else { return false }
+        do {
+            let devices = try deviceProvider.inputDevices()
+            let defaultID = try deviceProvider.defaultInputDeviceID()
+            let audioUnitDeviceID = selection.requiresExplicitDeviceConfiguration
+                ? currentAudioUnitDeviceID()
+                : nil
+            return selection.matchesCurrentRoute(
+                devices: devices,
+                defaultDeviceID: defaultID,
+                audioUnitDeviceID: audioUnitDeviceID
+            )
+        } catch {
+            QuillLogger.audio.error("Unable to verify audio input after configuration change: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func currentAudioUnitDeviceID() -> AudioDeviceID? {
+        guard let audioUnit = engine.inputNode.audioUnit else { return nil }
+        var deviceID = AudioDeviceID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioUnitGetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            &size
+        )
+        guard status == noErr else {
+            QuillLogger.audio.error("Unable to read current audio input device: \(status)")
+            return nil
+        }
+        return deviceID
     }
 
     private func convertAndChunk(_ inputBuffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) {

@@ -10,20 +10,38 @@ final class TranscriptionCompletionGateTests: XCTestCase {
         XCTAssertFalse(gate.isReady)
     }
 
-    func testDoesNotCompleteFromTurnCompletionAlone() {
+    func testDoesNotCompleteFromFinalTranscriptAlone() {
         var gate = TranscriptionCompletionGate()
 
-        gate.receiveTurnComplete()
+        gate.receiveFinalTranscript()
 
         XCTAssertFalse(gate.isReady)
     }
 
-    func testCompletesOnlyAfterBothSignalsArrive() {
+    func testCompletesWhenFinalTranscriptArrivesBeforeActivityEnd() {
         var gate = TranscriptionCompletionGate()
 
-        gate.receiveTurnComplete()
+        gate.receiveFinalTranscript()
         gate.markActivityEnded()
 
         XCTAssertTrue(gate.isReady)
+    }
+
+    func testCompletesWhenActivityEndArrivesBeforeFinalTranscript() {
+        var gate = TranscriptionCompletionGate()
+
+        gate.markActivityEnded()
+        gate.receiveFinalTranscript()
+
+        XCTAssertTrue(gate.isReady)
+    }
+
+    func testCompletionCanOnlyBeginOnce() {
+        var gate = TranscriptionCompletionGate()
+        gate.markActivityEnded()
+        gate.receiveFinalTranscript()
+
+        XCTAssertTrue(gate.beginCompletion())
+        XCTAssertFalse(gate.beginCompletion())
     }
 }

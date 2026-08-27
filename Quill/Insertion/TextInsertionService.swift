@@ -83,8 +83,7 @@ final class TextInsertionService: TextInsertionServing {
         guard let target,
               target.processIdentifier != ProcessInfo.processInfo.processIdentifier,
               let application = NSRunningApplication(processIdentifier: target.processIdentifier),
-              !application.isTerminated,
-              let focusedElement = target.focusedElement else {
+              !application.isTerminated else {
             try copyToClipboard(text)
             throw TextInsertionError.targetUnavailableCopiedToClipboard
         }
@@ -97,12 +96,18 @@ final class TextInsertionService: TextInsertionServing {
             try await Task.sleep(for: .milliseconds(150))
         }
 
+        let originalFocusStatus = target.focusedElement.map {
+            AXUIElementSetAttributeValue(
+                $0,
+                kAXFocusedAttribute as CFString,
+                kCFBooleanTrue
+            )
+        }
+        let focusedElement = currentFocusedElement(for: target.processIdentifier)
+            ?? (originalFocusStatus == .success ? target.focusedElement : nil)
+
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
-              AXUIElementSetAttributeValue(
-                  focusedElement,
-                  kAXFocusedAttribute as CFString,
-                  kCFBooleanTrue
-              ) == .success else {
+              let focusedElement else {
             try copyToClipboard(text)
             throw TextInsertionError.targetUnavailableCopiedToClipboard
         }
@@ -112,7 +117,73 @@ final class TextInsertionService: TextInsertionServing {
             try copyToClipboard(text)
             throw TextInsertionError.targetUnavailableCopiedToClipboard
         }
+
+        // Native controls reliably support replacing the selected text through
+        // Accessibility. Web editors need a real paste event so their input model
+        // receives the corresponding DOM event. Choose by the focused element's
+        // accessibility hierarchy rather than by application identity.
+        let usesPasteEvent = isInsideWebArea(focusedElement)
+        QuillLogger.insertion.info(
+            "Insertion path: \(usesPasteEvent ? "paste event" : "accessibility", privacy: .public)"
+        )
+        if !usesPasteEvent,
+           AXUIElementSetAttributeValue(
+               focusedElement,
+               kAXSelectedTextAttribute as CFString,
+               text as CFString
+           ) == .success {
+            return
+        }
         try await pasteWithClipboardPreservation(text)
+    }
+
+    private func currentFocusedElement(for processIdentifier: pid_t) -> AXUIElement? {
+        let applicationElement = AXUIElementCreateApplication(processIdentifier)
+        var focusedValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedValue
+        ) == .success,
+        let focusedValue,
+        CFGetTypeID(focusedValue) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return unsafeBitCast(focusedValue, to: AXUIElement.self)
+    }
+
+    private func isInsideWebArea(_ element: AXUIElement) -> Bool {
+        var current: AXUIElement? = element
+        // Bound the walk in case an application exposes a malformed hierarchy.
+        for _ in 0..<24 {
+            guard let node = current else { return false }
+            if stringAttribute(kAXRoleAttribute as CFString, from: node) == "AXWebArea" {
+                return true
+            }
+
+            var parentValue: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(
+                node,
+                kAXParentAttribute as CFString,
+                &parentValue
+            ) == .success,
+            let parentValue,
+            CFGetTypeID(parentValue) == AXUIElementGetTypeID() else {
+                return false
+            }
+            current = unsafeBitCast(parentValue, to: AXUIElement.self)
+        }
+        return false
+    }
+
+    private func stringAttribute(_ attribute: CFString, from element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
+              let value,
+              CFGetTypeID(value) == CFStringGetTypeID() else {
+            return nil
+        }
+        return value as? String
     }
 
     private func copyToClipboard(_ text: String) throws {
@@ -133,7 +204,7 @@ final class TextInsertionService: TextInsertionServing {
             throw TextInsertionError.clipboardWriteFailed
         }
 
-        guard let source = CGEventSource(stateID: .combinedSessionState),
+        guard let source = CGEventSource(stateID: .hidSystemState),
               let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
             restorePasteboard(snapshot, to: pasteboard)
@@ -141,7 +212,9 @@ final class TextInsertionService: TextInsertionServing {
             throw TextInsertionError.targetUnavailableCopiedToClipboard
         }
         keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
+        // A command modifier on key-up makes some web editors treat both
+        // events as paste commands. Clear it after the single command key-down.
+        keyUp.flags = []
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
 

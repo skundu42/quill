@@ -183,6 +183,33 @@ struct AudioInputResolution: Equatable {
     }
 }
 
+struct ActiveAudioInputSelection: Equatable {
+    let device: AudioInputDevice
+    let followsSystemDefault: Bool
+
+    init(preference: MicrophonePreference?, resolution: AudioInputResolution) {
+        device = resolution.device
+        followsSystemDefault = preference == nil || resolution.usedFallback
+    }
+
+    var requiresExplicitDeviceConfiguration: Bool {
+        !followsSystemDefault
+    }
+
+    func matchesCurrentRoute(
+        devices: [AudioInputDevice],
+        defaultDeviceID: AudioDeviceID,
+        audioUnitDeviceID: AudioDeviceID?
+    ) -> Bool {
+        if followsSystemDefault {
+            return devices.first(where: { $0.deviceID == defaultDeviceID })?.uid == device.uid
+        }
+        return devices.contains(where: {
+            $0.uid == device.uid && $0.deviceID == audioUnitDeviceID
+        })
+    }
+}
+
 @MainActor
 final class AudioInputDeviceCatalog: ObservableObject {
     @Published private(set) var devices: [AudioInputDevice] = []

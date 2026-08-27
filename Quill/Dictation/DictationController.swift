@@ -3,18 +3,25 @@ import Foundation
 
 struct TranscriptionCompletionGate {
     private(set) var activityEnded = false
-    private(set) var turnCompleteReceived = false
+    private(set) var finalTranscriptReceived = false
+    private(set) var completionStarted = false
 
     var isReady: Bool {
-        activityEnded && turnCompleteReceived
+        activityEnded && finalTranscriptReceived
     }
 
     mutating func markActivityEnded() {
         activityEnded = true
     }
 
-    mutating func receiveTurnComplete() {
-        turnCompleteReceived = true
+    mutating func receiveFinalTranscript() {
+        finalTranscriptReceived = true
+    }
+
+    mutating func beginCompletion() -> Bool {
+        guard isReady, !completionStarted else { return false }
+        completionStarted = true
+        return true
     }
 }
 
@@ -278,12 +285,12 @@ final class DictationController {
             guard !trimmed.isEmpty else { return }
             finalSegments.append(trimmed)
             state.interimTranscript = finalSegments.joined(separator: " ")
-            if completionGate.turnCompleteReceived {
-                scheduleCompletion()
-            }
+            completionGate.receiveFinalTranscript()
+            scheduleCompletion()
         case .turnComplete:
             guard state.phase == .finalizing else { return }
-            completionGate.receiveTurnComplete()
+            // Conversational Live models can emit this event, but the dedicated
+            // transcription model's finalized input transcription is authoritative.
             scheduleCompletion()
         case .error(let message):
             fail(message)
@@ -306,8 +313,14 @@ final class DictationController {
     }
 
     private func completeTranscription() async {
+        // Multiple final events can race after the debounce. Claim completion
+        // synchronously before disconnecting so only one task can ever insert.
+        guard state.phase == .finalizing, completionGate.beginCompletion() else { return }
+        state.phase = .inserting
         finalizationTimeoutTask?.cancel()
-        completionTask?.cancel()
+        // This method runs inside completionTask. Clear the stored handle without
+        // cancelling the task that still has to disconnect and insert the text.
+        completionTask = nil
         let transcript = finalSegments.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
             fail("Gemini did not return a transcript. Try speaking again.")
@@ -318,7 +331,6 @@ final class DictationController {
         session = nil
         if let completedSession { await completedSession.disconnect() }
 
-        state.phase = .inserting
         do {
             try await insertionService.insert(
                 transcript,

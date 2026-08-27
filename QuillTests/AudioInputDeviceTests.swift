@@ -45,6 +45,54 @@ final class AudioInputDeviceTests: XCTestCase {
             defaultDeviceID: kAudioObjectUnknown
         ))
     }
+
+    func testSystemDefaultDoesNotRequireExplicitDeviceConfiguration() {
+        let resolution = AudioInputResolution(device: builtIn, usedFallback: false)
+        let selection = ActiveAudioInputSelection(preference: nil, resolution: resolution)
+
+        XCTAssertFalse(selection.requiresExplicitDeviceConfiguration)
+        XCTAssertTrue(selection.matchesCurrentRoute(
+            devices: [builtIn, studio],
+            defaultDeviceID: builtIn.deviceID,
+            audioUnitDeviceID: nil
+        ))
+        XCTAssertFalse(selection.matchesCurrentRoute(
+            devices: [builtIn, studio],
+            defaultDeviceID: studio.deviceID,
+            audioUnitDeviceID: nil
+        ))
+    }
+
+    func testPreferredDeviceRequiresMatchingAudioUnitRoute() {
+        let preference = MicrophonePreference(uid: studio.uid, name: studio.name)
+        let resolution = AudioInputResolution(device: studio, usedFallback: false)
+        let selection = ActiveAudioInputSelection(preference: preference, resolution: resolution)
+
+        XCTAssertTrue(selection.requiresExplicitDeviceConfiguration)
+        XCTAssertTrue(selection.matchesCurrentRoute(
+            devices: [builtIn, studio],
+            defaultDeviceID: builtIn.deviceID,
+            audioUnitDeviceID: studio.deviceID
+        ))
+        XCTAssertFalse(selection.matchesCurrentRoute(
+            devices: [builtIn, studio],
+            defaultDeviceID: builtIn.deviceID,
+            audioUnitDeviceID: builtIn.deviceID
+        ))
+    }
+
+    func testUnavailablePreferenceFollowsFallbackDefault() {
+        let preference = MicrophonePreference(uid: "missing", name: "Travel Mic")
+        let resolution = AudioInputResolution(device: builtIn, usedFallback: true)
+        let selection = ActiveAudioInputSelection(preference: preference, resolution: resolution)
+
+        XCTAssertFalse(selection.requiresExplicitDeviceConfiguration)
+        XCTAssertTrue(selection.matchesCurrentRoute(
+            devices: [builtIn],
+            defaultDeviceID: builtIn.deviceID,
+            audioUnitDeviceID: nil
+        ))
+    }
 }
 
 @MainActor
