@@ -1,8 +1,27 @@
 import AppKit
 import Foundation
 
+struct TranscriptionCompletionGate {
+    private(set) var activityEnded = false
+    private(set) var turnCompleteReceived = false
+
+    var isReady: Bool {
+        activityEnded && turnCompleteReceived
+    }
+
+    mutating func markActivityEnded() {
+        activityEnded = true
+    }
+
+    mutating func receiveTurnComplete() {
+        turnCompleteReceived = true
+    }
+}
+
 @MainActor
 final class DictationController {
+    private static let maximumBufferedAudioBytes = 16_000 * 2 * 30
+
     private let state: AppState
     private let preferences: AppPreferences
     private let apiKeys: LocalAPIKeyStore
@@ -13,11 +32,14 @@ final class DictationController {
     private var session: GeminiLiveSession?
     private var sessionConnected = false
     private var pendingAudio: [Data] = []
+    private var pendingAudioBytes = 0
     private var shouldEndWhenConnected = false
+    private var completionGate = TranscriptionCompletionGate()
     private var finalSegments: [String] = []
     private var connectionTask: Task<Void, Never>?
     private var completionTask: Task<Void, Never>?
-    private var timeoutTask: Task<Void, Never>?
+    private var finalizationTimeoutTask: Task<Void, Never>?
+    private var errorResetTask: Task<Void, Never>?
     private var sessionGeneration = UUID()
     private var insertionTarget: TextInsertionTarget?
 
@@ -37,6 +59,10 @@ final class DictationController {
         self.stats = stats
     }
 
+    func rememberInsertionTarget() {
+        insertionService.rememberFrontmostTarget()
+    }
+
     func start() {
         guard state.phase == .idle || isErrorPhase else { return }
         resetSessionState()
@@ -54,22 +80,13 @@ final class DictationController {
         guard state.phase == .listening else { return }
         state.phase = .finalizing
         state.audioLevel = 0
+        let generation = sessionGeneration
         audioRecorder.stop()
 
-        if sessionConnected, let session {
-            Task { [weak self] in
-                do {
-                    try await session.sendActivityEnd()
-                    await MainActor.run {
-                        self?.startFinalizationTimeout()
-                        if self?.finalSegments.isEmpty == false { self?.scheduleCompletion() }
-                    }
-                } catch {
-                    await MainActor.run { self?.fail(error.localizedDescription) }
-                }
-            }
-        } else {
-            shouldEndWhenConnected = true
+        // Audio callbacks use the main queue. Enqueuing the end marker on that same
+        // queue guarantees every chunk produced before stop is handled first.
+        DispatchQueue.main.async { [weak self] in
+            self?.finishAudioInput(generation: generation)
         }
     }
 
@@ -77,16 +94,16 @@ final class DictationController {
         state.phase == .listening ? stop() : start()
     }
 
-    func cancel() {
-        guard state.phase.isActive else { return }
+    @discardableResult
+    func cancel() -> Bool {
+        guard state.phase.isActive else { return false }
         audioRecorder.stop()
-        connectionTask?.cancel()
-        completionTask?.cancel()
-        timeoutTask?.cancel()
-        if let session { Task { await session.disconnect() } }
+        let activeSession = session
         resetSessionState()
+        if let activeSession { Task { await activeSession.disconnect() } }
         state.phase = .idle
         state.interimTranscript = ""
+        return true
     }
 
     private var isErrorPhase: Bool {
@@ -105,7 +122,7 @@ final class DictationController {
                 throw AudioRecorderError.unavailableInput
             }
             guard generation == sessionGeneration, state.phase == .listening else {
-                if state.phase == .finalizing {
+                if generation == sessionGeneration, state.phase == .finalizing {
                     fail("Microphone setup finished after the shortcut was released. Hold the shortcut and try again.")
                 }
                 return
@@ -113,10 +130,14 @@ final class DictationController {
 
             try audioRecorder.start(
                 onChunk: { [weak self] data in
-                    Task { @MainActor in self?.receiveAudio(data, generation: generation) }
+                    DispatchQueue.main.async {
+                        self?.receiveAudio(data, generation: generation)
+                    }
                 },
                 onLevel: { [weak self] level in
-                    Task { @MainActor in self?.receiveAudioLevel(level, generation: generation) }
+                    DispatchQueue.main.async {
+                        self?.receiveAudioLevel(level, generation: generation)
+                    }
                 }
             )
 
@@ -139,39 +160,41 @@ final class DictationController {
             }
 
             sessionConnected = true
-            try await liveSession.sendActivityStart()
+            guard liveSession.enqueueActivityStart() else { throw GeminiLiveError.sendQueueFull }
             for chunk in pendingAudio {
-                try await liveSession.sendAudio(chunk)
+                guard liveSession.enqueueAudio(chunk) else { throw GeminiLiveError.sendQueueFull }
             }
             pendingAudio.removeAll(keepingCapacity: true)
+            pendingAudioBytes = 0
 
-            if shouldEndWhenConnected || state.phase == .finalizing {
-                try await liveSession.sendActivityEnd()
-                startFinalizationTimeout()
-                if !finalSegments.isEmpty { scheduleCompletion() }
+            // finishAudioInput is queued behind every audio callback on the main
+            // queue. Only end here when that ordered marker has already run.
+            if shouldEndWhenConnected {
+                endAudioInput(on: liveSession)
             }
         } catch is CancellationError {
             return
         } catch {
+            guard generation == sessionGeneration else { return }
             fail(friendlyMessage(for: error))
         }
     }
 
     private func receiveAudio(_ data: Data, generation: UUID) {
-        guard generation == sessionGeneration, state.phase == .listening || state.phase == .finalizing else { return }
+        guard generation == sessionGeneration,
+              !completionGate.activityEnded,
+              state.phase == .listening || state.phase == .finalizing else { return }
+
         if sessionConnected, let session {
-            Task { [weak self] in
-                do {
-                    try await session.sendAudio(data)
-                } catch {
-                    await MainActor.run { self?.fail(error.localizedDescription) }
-                }
+            guard session.enqueueAudio(data) else {
+                fail(GeminiLiveError.sendQueueFull.localizedDescription)
+                return
             }
         } else {
             pendingAudio.append(data)
-            let maximumBufferedBytes = 16_000 * 2 * 30
-            while pendingAudio.reduce(0, { $0 + $1.count }) > maximumBufferedBytes {
-                pendingAudio.removeFirst()
+            pendingAudioBytes += data.count
+            while pendingAudioBytes > Self.maximumBufferedAudioBytes, !pendingAudio.isEmpty {
+                pendingAudioBytes -= pendingAudio.removeFirst().count
             }
         }
     }
@@ -181,16 +204,49 @@ final class DictationController {
         state.audioLevel = level
     }
 
+    private func finishAudioInput(generation: UUID) {
+        guard generation == sessionGeneration,
+              state.phase == .finalizing,
+              !completionGate.activityEnded else { return }
+        guard sessionConnected, let session else {
+            shouldEndWhenConnected = true
+            return
+        }
+        endAudioInput(on: session)
+    }
+
+    private func endAudioInput(on session: GeminiLiveSession) {
+        guard !completionGate.activityEnded else { return }
+        guard session.enqueueActivityEnd() else {
+            fail(GeminiLiveError.sendQueueFull.localizedDescription)
+            return
+        }
+        completionGate.markActivityEnded()
+        startFinalizationTimeout()
+        if completionGate.isReady {
+            scheduleCompletion()
+        }
+    }
+
     private func receive(_ event: GeminiLiveSession.Event, generation: UUID) {
-        guard generation == sessionGeneration else { return }
+        guard generation == sessionGeneration,
+              state.phase == .listening || state.phase == .finalizing else { return }
+
         switch event {
         case .interim(let text):
-            state.interimTranscript = text
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            state.interimTranscript = (finalSegments + (trimmed.isEmpty ? [] : [trimmed])).joined(separator: " ")
         case .final(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
             finalSegments.append(trimmed)
             state.interimTranscript = finalSegments.joined(separator: " ")
+            if completionGate.turnCompleteReceived {
+                scheduleCompletion()
+            }
+        case .turnComplete:
+            guard state.phase == .finalizing else { return }
+            completionGate.receiveTurnComplete()
             scheduleCompletion()
         case .error(let message):
             fail(message)
@@ -198,22 +254,32 @@ final class DictationController {
     }
 
     private func scheduleCompletion() {
-        guard state.phase == .finalizing else { return }
+        guard state.phase == .finalizing, completionGate.isReady else { return }
         completionTask?.cancel()
+        let generation = sessionGeneration
         completionTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled else { return }
-            await self?.completeTranscription()
+            do {
+                try await Task.sleep(for: .milliseconds(750))
+            } catch {
+                return
+            }
+            guard let self, generation == self.sessionGeneration else { return }
+            await self.completeTranscription()
         }
     }
 
     private func completeTranscription() async {
-        timeoutTask?.cancel()
+        finalizationTimeoutTask?.cancel()
+        completionTask?.cancel()
         let transcript = finalSegments.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
             fail("Gemini did not return a transcript. Try speaking again.")
             return
         }
+
+        let completedSession = session
+        session = nil
+        if let completedSession { await completedSession.disconnect() }
 
         state.phase = .inserting
         do {
@@ -222,21 +288,33 @@ final class DictationController {
                 mode: preferences.insertionMode,
                 target: insertionTarget
             )
-            state.lastTranscript = transcript
-            stats.record(transcript: transcript)
-            state.interimTranscript = ""
+            recordCompletedTranscript(transcript)
             finishAndReturnToIdle()
+        } catch TextInsertionError.targetUnavailableCopiedToClipboard {
+            recordCompletedTranscript(transcript)
+            fail(TextInsertionError.targetUnavailableCopiedToClipboard.localizedDescription)
         } catch {
             fail(error.localizedDescription)
         }
     }
 
+    private func recordCompletedTranscript(_ transcript: String) {
+        state.lastTranscript = transcript
+        stats.record(transcript: transcript)
+        state.interimTranscript = ""
+    }
+
     private func startFinalizationTimeout() {
-        timeoutTask?.cancel()
-        timeoutTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(6))
-            guard !Task.isCancelled else { return }
-            self?.fail("Transcription timed out. Check your connection and try again.")
+        finalizationTimeoutTask?.cancel()
+        let generation = sessionGeneration
+        finalizationTimeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(8))
+            } catch {
+                return
+            }
+            guard let self, generation == self.sessionGeneration else { return }
+            self.fail("Transcription timed out. Check your connection and try again.")
         }
     }
 
@@ -255,9 +333,17 @@ final class DictationController {
         state.lastError = message
         state.audioLevel = 0
         state.phase = .error(message)
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(4))
-            guard let self, case .error = self.state.phase else { return }
+
+        let errorGeneration = sessionGeneration
+        errorResetTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(4))
+            } catch {
+                return
+            }
+            guard let self,
+                  errorGeneration == self.sessionGeneration,
+                  case .error = self.state.phase else { return }
             self.state.phase = .idle
         }
     }
@@ -265,14 +351,18 @@ final class DictationController {
     private func resetSessionState() {
         connectionTask?.cancel()
         completionTask?.cancel()
-        timeoutTask?.cancel()
+        finalizationTimeoutTask?.cancel()
+        errorResetTask?.cancel()
         connectionTask = nil
         completionTask = nil
-        timeoutTask = nil
+        finalizationTimeoutTask = nil
+        errorResetTask = nil
         session = nil
         sessionConnected = false
         pendingAudio.removeAll(keepingCapacity: true)
+        pendingAudioBytes = 0
         shouldEndWhenConnected = false
+        completionGate = TranscriptionCompletionGate()
         finalSegments.removeAll(keepingCapacity: true)
         insertionTarget = nil
         state.audioLevel = 0

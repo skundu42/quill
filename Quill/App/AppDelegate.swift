@@ -24,7 +24,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var primaryMenuItem: NSMenuItem?
     private var statusMenuItem: NSMenuItem?
     private var updateMenuItem: NSMenuItem?
-    private var terminationPolicy = TerminationPolicy()
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -35,7 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkeyManager.onPress = { [weak self] in self?.dictationController.start() }
         hotkeyManager.onRelease = { [weak self] in self?.dictationController.stop() }
-        hotkeyManager.onEscape = { [weak self] in self?.dictationController.cancel() }
+        hotkeyManager.onToggle = { [weak self] in self?.dictationController.toggle() }
+        hotkeyManager.onEscape = { [weak self] in self?.dictationController.cancel() ?? false }
 
         Publishers.CombineLatest(preferences.$shortcut, preferences.$dictationMode)
             .sink { [weak self] shortcut, mode in
@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         pillController = DictationPillPanelController(state: state, preferences: preferences) { [weak self] in
-            self?.dictationController.cancel()
+            _ = self?.dictationController.cancel()
         }
 
         DispatchQueue.main.async { [weak self] in self?.showPrimaryWindow() }
@@ -65,16 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard terminationPolicy.shouldTerminate(
-            updaterIsRelaunching: updateChecker.isPreparingToRelaunch
-        ) else {
-            onboardingWindow?.orderOut(nil)
-            settingsWindow?.orderOut(nil)
-            return .terminateCancel
-        }
-
-        return .terminateNow
+    func applicationWillTerminate(_ notification: Notification) {
+        _ = dictationController.cancel()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -157,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showPrimaryWindow() {
+        dictationController.rememberInsertionTarget()
         if preferences.onboardingComplete {
             showSettings()
         } else {
@@ -193,7 +186,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quitQuill() {
-        terminationPolicy.requestStatusMenuQuit()
         NSApp.terminate(nil)
     }
 

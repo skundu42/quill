@@ -72,6 +72,7 @@ final class AudioRecorder: @unchecked Sendable {
     private var levelHandler: LevelHandler?
     private var smoothedLevel = 0.0
     private let lock = NSLock()
+    private let deliveryQueue = DispatchQueue(label: "com.quill.voice.audio-delivery")
     private var running = false
 
     var isRunning: Bool {
@@ -95,11 +96,14 @@ final class AudioRecorder: @unchecked Sendable {
             throw AudioRecorderError.unsupportedFormat
         }
 
-        self.converter = converter
-        self.chunkHandler = onChunk
-        self.levelHandler = onLevel
-        smoothedLevel = 0
-        accumulator = AudioChunkAccumulator()
+        lock.withLock {
+            self.converter = converter
+            chunkHandler = onChunk
+            levelHandler = onLevel
+            smoothedLevel = 0
+            accumulator = AudioChunkAccumulator()
+            running = true
+        }
 
         inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
             self?.convertAndChunk(buffer, targetFormat: targetFormat)
@@ -108,12 +112,14 @@ final class AudioRecorder: @unchecked Sendable {
         engine.prepare()
         do {
             try engine.start()
-            lock.withLock { running = true }
         } catch {
             inputNode.removeTap(onBus: 0)
-            self.converter = nil
-            self.chunkHandler = nil
-            self.levelHandler = nil
+            lock.withLock {
+                running = false
+                self.converter = nil
+                chunkHandler = nil
+                levelHandler = nil
+            }
             throw error
         }
     }
@@ -122,54 +128,67 @@ final class AudioRecorder: @unchecked Sendable {
         guard isRunning else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        lock.withLock { running = false }
-        if let remainder = accumulator.flush() {
-            chunkHandler?(remainder)
+        let delivery = lock.withLock { () -> (Data?, ChunkHandler?) in
+            running = false
+            let remainder = accumulator.flush()
+            let handler = chunkHandler
+            converter = nil
+            chunkHandler = nil
+            levelHandler = nil
+            smoothedLevel = 0
+            return (remainder, handler)
         }
-        converter = nil
-        chunkHandler = nil
-        levelHandler = nil
-        smoothedLevel = 0
+        deliveryQueue.sync {
+            if let remainder = delivery.0 {
+                delivery.1?(remainder)
+            }
+        }
     }
 
     private func convertAndChunk(_ inputBuffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) {
-        guard let converter else { return }
+        lock.withLock {
+            guard running, let converter, let chunkHandler, let levelHandler else { return }
 
-        let ratio = targetFormat.sampleRate / inputBuffer.format.sampleRate
-        let capacity = AVAudioFrameCount(ceil(Double(inputBuffer.frameLength) * ratio)) + 1
-        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else { return }
+            let ratio = targetFormat.sampleRate / inputBuffer.format.sampleRate
+            let capacity = AVAudioFrameCount(ceil(Double(inputBuffer.frameLength) * ratio)) + 1
+            guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else { return }
 
-        var suppliedInput = false
-        var conversionError: NSError?
-        let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outputStatus in
-            if suppliedInput {
-                outputStatus.pointee = .noDataNow
-                return nil
+            var suppliedInput = false
+            var conversionError: NSError?
+            let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outputStatus in
+                if suppliedInput {
+                    outputStatus.pointee = .noDataNow
+                    return nil
+                }
+                suppliedInput = true
+                outputStatus.pointee = .haveData
+                return inputBuffer
             }
-            suppliedInput = true
-            outputStatus.pointee = .haveData
-            return inputBuffer
-        }
 
-        guard status != .error,
-              conversionError == nil,
-              outputBuffer.frameLength > 0,
-              let samples = outputBuffer.int16ChannelData?.pointee else {
-            QuillLogger.audio.error("Audio conversion failed")
-            return
-        }
+            guard status != .error,
+                  conversionError == nil,
+                  outputBuffer.frameLength > 0,
+                  let samples = outputBuffer.int16ChannelData?.pointee else {
+                QuillLogger.audio.error("Audio conversion failed")
+                return
+            }
 
-        let rawLevel = AudioLevelMeter.normalizedLevel(
-            samples: samples,
-            count: Int(outputBuffer.frameLength)
-        )
-        let smoothing = rawLevel > smoothedLevel ? 0.62 : 0.16
-        smoothedLevel += (rawLevel - smoothedLevel) * smoothing
-        levelHandler?(smoothedLevel)
+            let rawLevel = AudioLevelMeter.normalizedLevel(
+                samples: samples,
+                count: Int(outputBuffer.frameLength)
+            )
+            let smoothing = rawLevel > smoothedLevel ? 0.62 : 0.16
+            smoothedLevel += (rawLevel - smoothedLevel) * smoothing
 
-        let data = Data(bytes: samples, count: Int(outputBuffer.frameLength) * MemoryLayout<Int16>.size)
-        for chunk in accumulator.append(data) {
-            chunkHandler?(chunk)
+            let data = Data(bytes: samples, count: Int(outputBuffer.frameLength) * MemoryLayout<Int16>.size)
+            let chunks = accumulator.append(data)
+            let level = smoothedLevel
+            deliveryQueue.async {
+                levelHandler(level)
+                for chunk in chunks {
+                    chunkHandler(chunk)
+                }
+            }
         }
     }
 }

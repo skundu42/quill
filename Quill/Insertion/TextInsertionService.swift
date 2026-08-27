@@ -6,12 +6,14 @@ enum TextInsertionError: LocalizedError {
     case accessibilityPermissionMissing
     case noFocusedElement
     case clipboardWriteFailed
+    case targetUnavailableCopiedToClipboard
 
     var errorDescription: String? {
         switch self {
         case .accessibilityPermissionMissing: "Quill needs Accessibility access to type into other apps."
         case .noFocusedElement: "Quill could not find an editable text field."
         case .clipboardWriteFailed: "Quill could not write the transcript to the clipboard."
+        case .targetUnavailableCopiedToClipboard: "The original text field is no longer available. Your transcript was copied to the clipboard."
         }
     }
 }
@@ -23,8 +25,17 @@ struct TextInsertionTarget {
 
 @MainActor
 final class TextInsertionService {
+    private var lastExternalTarget: TextInsertionTarget?
+
+    func rememberFrontmostTarget() {
+        _ = captureTarget()
+    }
+
     func captureTarget() -> TextInsertionTarget? {
         guard let application = NSWorkspace.shared.frontmostApplication else { return nil }
+        guard application.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            return lastExternalTarget
+        }
 
         let applicationElement = AXUIElementCreateApplication(application.processIdentifier)
         var focusedValue: CFTypeRef?
@@ -34,21 +45,27 @@ final class TextInsertionService {
             &focusedValue
         )
 
-        return TextInsertionTarget(
+        let focusedElement: AXUIElement?
+        if status == .success,
+           let focusedValue,
+           CFGetTypeID(focusedValue) == AXUIElementGetTypeID() {
+            focusedElement = unsafeBitCast(focusedValue, to: AXUIElement.self)
+        } else {
+            focusedElement = nil
+        }
+        let target = TextInsertionTarget(
             processIdentifier: application.processIdentifier,
-            focusedElement: status == .success ? focusedValue as! AXUIElement? : nil
+            focusedElement: focusedElement
         )
+        lastExternalTarget = target
+        return target
     }
 
     func insert(_ text: String, mode: InsertionMode, target: TextInsertionTarget?) async throws {
         guard !text.isEmpty else { return }
 
         if mode == .clipboard {
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            guard pasteboard.setString(text, forType: .string) else {
-                throw TextInsertionError.clipboardWriteFailed
-            }
+            try copyToClipboard(text)
             return
         }
 
@@ -56,27 +73,47 @@ final class TextInsertionService {
             throw TextInsertionError.accessibilityPermissionMissing
         }
 
-        var restoredApplication = false
-        if let target,
-           let application = NSRunningApplication(processIdentifier: target.processIdentifier),
-           !application.isTerminated,
-           !application.isActive {
-            application.activate(options: [])
-            restoredApplication = true
+        guard let target,
+              target.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              let application = NSRunningApplication(processIdentifier: target.processIdentifier),
+              !application.isTerminated,
+              let focusedElement = target.focusedElement else {
+            try copyToClipboard(text)
+            throw TextInsertionError.targetUnavailableCopiedToClipboard
+        }
+
+        if !application.isActive {
+            guard application.activate(options: []) else {
+                try copyToClipboard(text)
+                throw TextInsertionError.targetUnavailableCopiedToClipboard
+            }
             try await Task.sleep(for: .milliseconds(150))
         }
 
-        if let focusedElement = target?.focusedElement {
-            AXUIElementSetAttributeValue(
-                focusedElement,
-                kAXFocusedAttribute as CFString,
-                kCFBooleanTrue
-            )
-            if restoredApplication {
-                try await Task.sleep(for: .milliseconds(50))
-            }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
+              AXUIElementSetAttributeValue(
+                  focusedElement,
+                  kAXFocusedAttribute as CFString,
+                  kCFBooleanTrue
+              ) == .success else {
+            try copyToClipboard(text)
+            throw TextInsertionError.targetUnavailableCopiedToClipboard
+        }
+
+        try await Task.sleep(for: .milliseconds(50))
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else {
+            try copyToClipboard(text)
+            throw TextInsertionError.targetUnavailableCopiedToClipboard
         }
         try await pasteWithClipboardPreservation(text)
+    }
+
+    private func copyToClipboard(_ text: String) throws {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.setString(text, forType: .string) else {
+            throw TextInsertionError.clipboardWriteFailed
+        }
     }
 
     private func pasteWithClipboardPreservation(_ text: String) async throws {
@@ -93,7 +130,8 @@ final class TextInsertionService {
               let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
             restorePasteboard(snapshot, to: pasteboard)
-            throw TextInsertionError.noFocusedElement
+            try copyToClipboard(text)
+            throw TextInsertionError.targetUnavailableCopiedToClipboard
         }
         keyDown.flags = .maskCommand
         keyUp.flags = .maskCommand

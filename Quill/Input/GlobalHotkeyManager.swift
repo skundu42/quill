@@ -2,17 +2,35 @@ import AppKit
 import Carbon
 import Foundation
 
+enum GlobalHotkeyAction: Equatable {
+    case press
+    case release
+    case toggle
+    case ignore
+
+    static func resolve(eventKind: UInt32, mode: DictationMode) -> GlobalHotkeyAction {
+        switch mode {
+        case .pushToTalk:
+            if eventKind == UInt32(kEventHotKeyPressed) { return .press }
+            if eventKind == UInt32(kEventHotKeyReleased) { return .release }
+            return .ignore
+        case .toggle:
+            return eventKind == UInt32(kEventHotKeyPressed) ? .toggle : .ignore
+        }
+    }
+}
+
 @MainActor
 final class GlobalHotkeyManager {
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
-    var onEscape: (() -> Void)?
+    var onToggle: (() -> Void)?
+    var onEscape: (() -> Bool)?
 
     private var eventHandlerRef: EventHandlerRef?
     private var hotKeyRef: EventHotKeyRef?
     private var globalEscapeMonitor: Any?
     private var localEscapeMonitor: Any?
-    private var toggleActive = false
     private var dictationMode: DictationMode = .pushToTalk
 
     init() {
@@ -33,7 +51,6 @@ final class GlobalHotkeyManager {
             self.hotKeyRef = nil
         }
         dictationMode = mode
-        toggleActive = false
 
         let signature = OSType(0x514C4C31) // QLL1
         let hotKeyID = EventHotKeyID(signature: signature, id: 1)
@@ -75,26 +92,22 @@ final class GlobalHotkeyManager {
     }
 
     private func handleHotkeyEvent(kind: UInt32) {
-        switch dictationMode {
-        case .pushToTalk:
-            if kind == UInt32(kEventHotKeyPressed) { onPress?() }
-            if kind == UInt32(kEventHotKeyReleased) { onRelease?() }
-        case .toggle:
-            guard kind == UInt32(kEventHotKeyPressed) else { return }
-            toggleActive.toggle()
-            toggleActive ? onPress?() : onRelease?()
+        switch GlobalHotkeyAction.resolve(eventKind: kind, mode: dictationMode) {
+        case .press: onPress?()
+        case .release: onRelease?()
+        case .toggle: onToggle?()
+        case .ignore: break
         }
     }
 
     private func installEscapeMonitors() {
         globalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == UInt16(kVK_Escape) {
-                Task { @MainActor in self?.onEscape?() }
+                Task { @MainActor in _ = self?.onEscape?() }
             }
         }
         localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == UInt16(kVK_Escape) {
-                self?.onEscape?()
+            if event.keyCode == UInt16(kVK_Escape), self?.onEscape?() == true {
                 return nil
             }
             return event
