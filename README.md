@@ -1,34 +1,84 @@
-# Quill
+<p align="center">
+  <img src="brand/quill-logo.svg" width="88" height="88" alt="Quill logo">
+</p>
 
-Open-source, system-wide voice typing for macOS.
+<h1 align="center">Quill</h1>
 
-Hold **⌥ Space**, speak, and release. Quill streams microphone audio to Gemini Live Transcription, receives a polished transcript, and inserts it at the active cursor.
+<p align="center">
+  <strong>Fast, system-wide voice typing for macOS.</strong><br>
+  Speak naturally, then let Quill place polished text wherever you are writing.
+</p>
 
-## What is implemented
+<p align="center">
+  macOS 14+ &nbsp;·&nbsp; Open source &nbsp;·&nbsp; Bring your own Gemini API key
+</p>
 
-- Native SwiftUI menu-bar app (`LSUIElement`)
-- Global push-to-talk and toggle shortcuts via Carbon hot keys
-- `AVAudioEngine` microphone capture and 16 kHz mono PCM conversion
-- 100 ms audio chunking
-- Gemini Live API WebSocket client using `gemini-3.5-transcribe-live`
-- Smart and verbatim transcription modes
-- Automatic language detection and language hints
-- Custom vocabulary biasing
-- Accessibility API insertion with clipboard-preserving paste fallback
-- Gemini API-key storage in macOS Keychain
-- Non-activating floating dictation indicator
-- Three-step onboarding for permissions and BYOK setup
-- General, Voice, Dictionary, and Advanced settings
-- Launch-at-login support through `SMAppService`
+---
 
-## Requirements
+Quill lives quietly in the menu bar and turns your voice into text across macOS. Place your cursor in an editable field, hold <kbd>⌥ Option</kbd> + <kbd>Space</kbd>, speak, and release. Your transcript appears at the original cursor so you can keep working without changing context.
+
+
+## Highlights
+
+- **Dictate across macOS** — write in browsers, editors, messaging apps, and other standard text fields.
+- **Use the workflow you prefer** — choose hold-to-speak or press-to-start/stop dictation.
+- **Get cleaner text automatically** — Smart mode improves punctuation and readability; Verbatim mode stays closer to your exact words.
+- **Speak in your language** — let Quill detect the language or select a preferred language.
+- **Teach Quill your terminology** — add names, technical terms, acronyms, and product vocabulary.
+- **See what is happening** — a lightweight floating indicator responds while Quill listens and processes speech.
+- **Keep your clipboard intact** — text insertion preserves and restores the clipboard when a paste fallback is needed.
+- **Track simple local usage** — view daily and lifetime dictation and word counts without saving transcript history.
+- **Start when your Mac starts** — optionally launch Quill automatically at login.
+
+## Getting started
+
+### What you need
+
+- A Mac running macOS 14 or later
+- A Gemini API key with access to the Live transcription model
+
+### Set up Quill
+
+1. Move `Quill.app` to your **Applications** folder and open it.
+2. Follow onboarding to allow **Microphone** and **Accessibility** access.
+3. Paste your Gemini API key and finish setup.
+4. Click inside any editable text field.
+5. Hold <kbd>⌥ Option</kbd> + <kbd>Space</kbd>, speak, then release.
+
+Quill remains available from the menu bar. Open its settings to change the shortcut, dictation behavior, transcription style, language, vocabulary, launch-at-login preference, or API key.
+
+## Everyday controls
+
+| Action | Default behavior |
+| --- | --- |
+| Start dictating | Hold <kbd>⌥ Option</kbd> + <kbd>Space</kbd> |
+| Finish and insert | Release the shortcut |
+| Cancel dictation | Press <kbd>Esc</kbd> |
+| Open Quill | Select the Quill icon in the menu bar |
+| Change the API key | Open **Settings → Privacy & Access** |
+
+The shortcut can also be changed to <kbd>⌃ Control</kbd> + <kbd>Space</kbd> or <kbd>⇧ Shift</kbd> + <kbd>⌘ Command</kbd> + <kbd>Space</kbd>.
+
+## Privacy and local data
+
+Quill is bring-your-own-key software. It does not run an intermediary transcription service.
+
+| Data | How Quill handles it |
+| --- | --- |
+| Microphone audio | Held in memory while dictating and streamed directly to Google's Gemini API. Quill never writes recordings to disk. |
+| Transcripts | Inserted at the active cursor. Transcript history is not stored; the most recent transcript remains in memory only until Quill quits. |
+| Usage statistics | Only dictation and word counts are stored locally on the Mac. They can be reset from **Privacy & Access**. |
+| Gemini API key | Stored at `~/Library/Application Support/Quill/api-key` with owner-only (`0600`) permissions. It is not stored in Keychain and remains until replaced. |
+
+Accessibility permission is used only to return focus to the original text field and insert the completed transcript. Microphone permission is used only while dictation is active.
+
+## Build from source
+
+### Developer requirements
 
 - macOS 14 or later
 - Xcode 26 or later
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-- A Gemini API key with Live API access
-
-## Build and run
 
 Generate the Xcode project:
 
@@ -37,37 +87,30 @@ xcodegen generate
 open Quill.xcodeproj
 ```
 
-Choose the **Quill** scheme, select your development team under Signing & Capabilities, then run the app.
+Select the **Quill** scheme, choose a development team under **Signing & Capabilities**, and run the app.
 
-For an ad-hoc signed local Release build:
+To produce a universal release build, use:
 
 ```sh
 ./scripts/build.sh
-open dist/Quill.app
 ```
 
-The script creates a bundle that runs on the build machine. Public distribution still requires a Developer ID signature and notarization.
+The release script expects a valid **Developer ID Application** signing identity and writes the signed application to `dist/Quill.app`. Public distribution also requires notarization.
 
-## Test
+### Run the tests
 
 ```sh
 xcodebuild \
   -project Quill.xcodeproj \
   -scheme Quill \
-  -derivedDataPath .build/DerivedData \
+  -destination 'platform=macOS' \
   CODE_SIGNING_ALLOWED=NO \
   test
 ```
 
-## Privacy
+## Website preview
 
-Quill keeps raw audio in memory only and sends it directly to Google's Gemini API for transcription. Raw audio is never written to disk. Transcript history is disabled; the current build retains only the most recent transcript in memory until the app quits.
-
-The API key is stored as a generic password in macOS Keychain with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
-
-## Website prototype
-
-The landing-page prototype remains in `index.html`, `styles.css`, and `app.js`. Preview it with:
+The Quill landing page is included in `index.html`, `styles.css`, and `app.js`. Preview it locally with:
 
 ```sh
 python3 -m http.server 4173
@@ -75,4 +118,4 @@ python3 -m http.server 4173
 
 ## License
 
-Apache-2.0 / MIT
+Quill is available under the [Apache License 2.0](LICENSE).
