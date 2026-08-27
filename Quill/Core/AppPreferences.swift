@@ -32,7 +32,7 @@ final class AppPreferences: ObservableObject {
     @Published var model: String { didSet { defaults.set(model, forKey: Key.model) } }
     @Published var launchAtLoginError: String?
 
-    private init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         onboardingComplete = defaults.bool(forKey: Key.onboardingComplete)
         launchAtLogin = defaults.bool(forKey: Key.launchAtLogin)
@@ -42,7 +42,7 @@ final class AppPreferences: ObservableObject {
         insertionMode = InsertionMode(rawValue: defaults.string(forKey: Key.insertionMode) ?? "") ?? .direct
         shortcut = ShortcutPreset(rawValue: defaults.string(forKey: Key.shortcut) ?? "") ?? .optionSpace
         languageCode = defaults.string(forKey: Key.languageCode) ?? ""
-        vocabulary = defaults.stringArray(forKey: Key.vocabulary) ?? ["Kubernetes", "PostgreSQL", "SwiftUI", "vLLM"]
+        vocabulary = defaults.stringArray(forKey: Key.vocabulary) ?? []
         model = defaults.string(forKey: Key.model) ?? "gemini-3.5-transcribe-live"
     }
 
