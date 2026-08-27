@@ -1,8 +1,9 @@
+import Image from "next/image";
 import { QuillLogo } from "@/components/QuillLogo";
 import { VoiceDemo } from "@/components/VoiceDemo";
 
 const repositoryUrl = "https://github.com/skundu42/quill";
-const releaseUrl = `${repositoryUrl}/releases/latest`;
+const latestDmgUrl = `${repositoryUrl}/releases/latest/download/Quill-macOS.dmg`;
 
 export default function HomePage() {
   return (
@@ -10,14 +11,6 @@ export default function HomePage() {
       <a className="skip-link" href="#main">
         Skip to content
       </a>
-
-      <div className="announcement" role="status">
-        <span className="announcement-dot" aria-hidden="true" />
-        Quill is in early development
-        <a href={repositoryUrl}>
-          Follow the build <span aria-hidden="true">↗</span>
-        </a>
-      </div>
 
       <header className="site-header shell">
         <a className="brand" href="#top" aria-label="Quill home">
@@ -27,27 +20,47 @@ export default function HomePage() {
 
         <nav className="desktop-nav" aria-label="Main navigation">
           <a href="#how-it-works">How it works</a>
-          <a href="#native">Native by design</a>
           <a href="#privacy">Privacy</a>
-          <a href="#open-source">Open source</a>
+          <a className="github-nav-link" href={repositoryUrl} aria-label="Quill on GitHub">
+            GitHub <span aria-hidden="true">↗</span>
+          </a>
         </nav>
 
-        <a className="header-cta" href={releaseUrl}>
-          Get Quill
-          <span className="arrow-box" aria-hidden="true">
-            ↓
-          </span>
-        </a>
+        <div className="header-actions">
+          <a className="header-download" href={latestDmgUrl} aria-label="Download the latest Quill DMG from GitHub">
+            Download <span aria-hidden="true">↓</span>
+          </a>
+          <a className="header-cta" href={repositoryUrl} aria-label="Star Quill on GitHub">
+            Star
+            <span className="arrow-box" aria-hidden="true">
+              ★
+            </span>
+          </a>
+        </div>
       </header>
 
       <main id="main">
         <section className="hero shell" id="top">
           <div className="hero-copy">
-            <p className="eyebrow">Voice typing for macOS</p>
+            <div className="hero-meta">
+              <p className="eyebrow">Voice typing for macOS</p>
+              <span className="gemini-badge">
+                <Image
+                  className="gemini-mark"
+                  src="/brand/gemini-spark.png"
+                  alt=""
+                  width={18}
+                  height={18}
+                  aria-hidden="true"
+                />
+                Powered by Gemini
+              </span>
+            </div>
             <h1>
-              Say it.
+              Intelligent
               <br />
-              <span>It’s already typed.</span>
+              {" "}
+              <span>realtime dictation.</span>
             </h1>
             <p className="hero-intro">
               Hold one shortcut, speak naturally, and Quill puts polished text wherever your cursor is. No window. No copy and paste.
@@ -99,86 +112,6 @@ export default function HomePage() {
               </div>
               <h3>Done</h3>
               <p>Polished text lands at your active cursor.</p>
-            </div>
-          </div>
-        </section>
-
-        <section className="native-section shell section" id="native">
-          <div className="native-copy">
-            <p className="eyebrow">Native by design</p>
-            <h2>
-              There when you need it.
-              <br />
-              Gone when you don’t.
-            </h2>
-            <p>
-              Quill lives quietly in the menu bar, uses familiar macOS materials, and never steals focus. The only interface you’ll see day to day is a small listening indicator.
-            </p>
-            <ul className="check-list">
-              <li>
-                <span aria-hidden="true">✓</span> Swift and SwiftUI, not Electron
-              </li>
-              <li>
-                <span aria-hidden="true">✓</span> Works in any editable text field
-              </li>
-              <li>
-                <span aria-hidden="true">✓</span> Automatic language detection
-              </li>
-            </ul>
-          </div>
-
-          <div className="desktop-mock" aria-label="Quill menu bar interface preview">
-            <div className="desktop-wallpaper">
-              <div className="menu-bar">
-                <span className="apple-mark" aria-hidden="true">
-                  ●
-                </span>
-                <strong>Notes</strong>
-                <span>File</span>
-                <span>Edit</span>
-                <span>Format</span>
-                <div className="menu-spacer" />
-                <span>9:41</span>
-                <button className="menu-quill" type="button" aria-label="Open Quill menu">
-                  ✒
-                </button>
-              </div>
-              <div className="quill-menu">
-                <div className="menu-title">
-                  <span className="tiny-mark">✒</span>
-                  <strong>Quill</strong>
-                  <span className="menu-state">Ready</span>
-                </div>
-                <button type="button">
-                  <span>
-                    <i className="live-dot" />Start Dictation
-                  </span>
-                  <kbd>⌥ Space</kbd>
-                </button>
-                <div className="menu-rule" />
-                <button type="button">
-                  <span>Microphone</span>
-                  <small>MacBook Pro Mic</small>
-                </button>
-                <button type="button">
-                  <span>Mode</span>
-                  <small>Smart</small>
-                </button>
-                <div className="menu-rule" />
-                <button type="button">
-                  <span>Settings…</span>
-                  <kbd>⌘ ,</kbd>
-                </button>
-              </div>
-              <div className="floating-preview">
-                <span className="recording-dot" />
-                <div className="mini-wave">
-                  {Array.from({ length: 7 }, (_, index) => (
-                    <i key={index} />
-                  ))}
-                </div>
-                <span>Listening</span>
-              </div>
             </div>
           </div>
         </section>
@@ -319,7 +252,7 @@ export default function HomePage() {
               <br />a quiet day off.
             </h2>
           </div>
-          <a className="download-button" href={releaseUrl}>
+          <a className="download-button" href={latestDmgUrl} aria-label="Download the latest Quill DMG from GitHub">
             <span>
               <small>Free &amp; open source</small>Get Quill for macOS
             </span>
@@ -343,7 +276,10 @@ export default function HomePage() {
           <a href="#privacy">Privacy</a>
           <a href={`${repositoryUrl}/blob/main/README.md`}>Docs</a>
         </div>
-        <small>© 2026 Quill. Apache-2.0.</small>
+        <small>
+          © 2026 Quill. Apache-2.0. <span aria-hidden="true">·</span> Built by{" "}
+          <a href="https://x.com/SandipanKundu42">Sandipan Kundu</a>
+        </small>
       </footer>
     </>
   );

@@ -166,7 +166,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" "$DMG_PATH" "$APPCAST_PATH" --clobber
+        run: |
+          LATEST_DMG_PATH="$GITHUB_WORKSPACE/dist/Quill-macOS.dmg"
+          cp "$DMG_PATH" "$LATEST_DMG_PATH"
+          gh release upload "$RELEASE_TAG" "$DMG_PATH" "$LATEST_DMG_PATH" "$APPCAST_PATH" --clobber
 
       - name: Remove temporary signing keychain
         if: always()
