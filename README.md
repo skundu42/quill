@@ -25,6 +25,8 @@ Place your cursor in an editable field, hold <kbd>⌥ Option</kbd> + <kbd>Space<
 
 - **Dictate across macOS:** Write in browsers, editors, messaging apps, and other standard text fields.
 - **Use the workflow you prefer:** Choose hold-to-speak or press-to-start/stop dictation.
+- **Customize every shortcut:** Record any modified-key shortcut for dictation and for pasting your latest transcript.
+- **Choose your microphone:** Follow the macOS default input or select a specific connected microphone.
 - **Get cleaner text automatically:** Smart mode improves punctuation and readability; Verbatim mode stays closer to your exact words.
 - **Speak in your language:** Let Quill detect the language or select a preferred language.
 - **Teach Quill your terminology:** Add names, technical terms, acronyms, and product vocabulary.
@@ -52,7 +54,7 @@ Place your cursor in an editable field, hold <kbd>⌥ Option</kbd> + <kbd>Space<
 4. Click inside any editable text field.
 5. Hold <kbd>⌥ Option</kbd> + <kbd>Space</kbd>, speak, then release.
 
-Quill remains available from the menu bar. Open its settings to change the shortcut, dictation behavior, transcription style, language, vocabulary, launch-at-login preference, or API key.
+Quill remains available from the menu bar. Open its settings to change the shortcuts, microphone, dictation behavior, transcription style, language, vocabulary, launch-at-login preference, or API key.
 
 ## Everyday controls
 
@@ -60,24 +62,15 @@ Quill remains available from the menu bar. Open its settings to change the short
 | --- | --- |
 | Start dictating | Hold <kbd>⌥ Option</kbd> + <kbd>Space</kbd> |
 | Finish and insert | Release the shortcut |
+| Paste the latest transcript again | Press <kbd>⌃ Control</kbd> + <kbd>⌥ Option</kbd> + <kbd>V</kbd> |
 | Cancel dictation | Press <kbd>Esc</kbd> |
 | Open Quill | Select the Quill icon in the menu bar |
 | Change the API key | Open **Settings → Privacy & Access** |
 | Check for updates | Choose **Quill → Check for Updates…** or use the button in the app sidebar |
 
-The shortcut can also be changed to <kbd>⌃ Control</kbd> + <kbd>Space</kbd> or <kbd>⇧ Shift</kbd> + <kbd>⌘ Command</kbd> + <kbd>Space</kbd>.
+Both global shortcuts are customizable from **Settings → Dictation**. Click a shortcut field, then press any non-modifier key together with Command, Option, Control, or Shift. Microphone selection is on the same page. If a specifically selected microphone is unavailable, Quill temporarily uses the current macOS default without forgetting the preferred device.
 
 ## Privacy and local data
-
-Quill is bring-your-own-key software. It does not run an intermediary transcription service.
-
-| Data | How Quill handles it |
-| --- | --- |
-| Microphone audio | Held in memory while dictating and streamed directly to Google's Gemini API. Quill never writes recordings to disk. |
-| Transcripts | Inserted at the active cursor. Transcript history is not stored; the most recent transcript remains in memory only until Quill quits. |
-| Usage statistics | Only dictation and word counts are stored locally on the Mac. They can be reset from **Privacy & Access**. |
-| Gemini API key | Stored at `~/Library/Application Support/Quill/api-key` with owner-only (`0600`) permissions. It is not stored in Keychain and remains until replaced. |
-| Update checks | Sparkle periodically reads Quill's public release feed from GitHub. System profiling is disabled, and no API key, transcript, or usage statistics are included. |
 
 Accessibility permission is used only to return focus to the original text field and insert the completed transcript. Microphone permission is used only while dictation is active.
 

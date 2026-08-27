@@ -1,4 +1,6 @@
+import AudioToolbox
 import AVFoundation
+import CoreAudio
 import Foundation
 
 struct AudioChunkAccumulator {
@@ -32,12 +34,16 @@ enum AudioRecorderError: LocalizedError, Equatable {
     case unavailableInput
     case unsupportedFormat
     case conversionFailed
+    case deviceConfigurationFailed
+    case inputConfigurationChanged
 
     var errorDescription: String? {
         switch self {
         case .unavailableInput: "No microphone input is available."
         case .unsupportedFormat: "The microphone audio format is not supported."
         case .conversionFailed: "Quill could not convert microphone audio."
+        case .deviceConfigurationFailed: "Quill could not use the selected microphone."
+        case .inputConfigurationChanged: "The microphone changed or disconnected. Try dictating again."
         }
     }
 }
@@ -64,25 +70,73 @@ enum AudioLevelMeter {
 final class AudioRecorder: @unchecked Sendable {
     typealias ChunkHandler = @Sendable (Data) -> Void
     typealias LevelHandler = @Sendable (Double) -> Void
+    typealias ErrorHandler = @Sendable (AudioRecorderError) -> Void
 
     private let engine = AVAudioEngine()
+    private let deviceProvider: any AudioInputDeviceProviding
     private var converter: AVAudioConverter?
     private var accumulator = AudioChunkAccumulator()
     private var chunkHandler: ChunkHandler?
     private var levelHandler: LevelHandler?
+    private var errorHandler: ErrorHandler?
+    private var configurationObserver: NSObjectProtocol?
     private var smoothedLevel = 0.0
     private let lock = NSLock()
     private let deliveryQueue = DispatchQueue(label: "com.quill.voice.audio-delivery")
     private var running = false
 
+    init(deviceProvider: any AudioInputDeviceProviding = CoreAudioInputDeviceProvider()) {
+        self.deviceProvider = deviceProvider
+    }
+
     var isRunning: Bool {
         lock.withLock { running }
     }
 
-    func start(onChunk: @escaping ChunkHandler, onLevel: @escaping LevelHandler) throws {
-        guard !isRunning else { return }
+    @discardableResult
+    func start(
+        microphone: MicrophonePreference?,
+        onChunk: @escaping ChunkHandler,
+        onLevel: @escaping LevelHandler,
+        onError: @escaping ErrorHandler
+    ) throws -> AudioInputResolution {
+        if isRunning {
+            let devices = try deviceProvider.inputDevices()
+            let defaultID = try deviceProvider.defaultInputDeviceID()
+            guard let resolution = AudioInputResolution.resolve(
+                preference: microphone,
+                devices: devices,
+                defaultDeviceID: defaultID
+            ) else { throw AudioRecorderError.unavailableInput }
+            return resolution
+        }
+
+        let devices = try deviceProvider.inputDevices()
+        let defaultID = try deviceProvider.defaultInputDeviceID()
+        guard let resolution = AudioInputResolution.resolve(
+            preference: microphone,
+            devices: devices,
+            defaultDeviceID: defaultID
+        ) else { throw AudioRecorderError.unavailableInput }
 
         let inputNode = engine.inputNode
+        guard let audioUnit = inputNode.audioUnit else {
+            throw AudioRecorderError.unavailableInput
+        }
+        var deviceID = AudioDeviceID(resolution.device.deviceID)
+        let deviceStatus = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        guard deviceStatus == noErr else {
+            QuillLogger.audio.error("Unable to select audio input device: \(deviceStatus)")
+            throw AudioRecorderError.deviceConfigurationFailed
+        }
+
         let inputFormat = inputNode.outputFormat(forBus: 0)
         guard inputFormat.channelCount > 0, inputFormat.sampleRate > 0 else {
             throw AudioRecorderError.unavailableInput
@@ -100,6 +154,7 @@ final class AudioRecorder: @unchecked Sendable {
             self.converter = converter
             chunkHandler = onChunk
             levelHandler = onLevel
+            errorHandler = onError
             smoothedLevel = 0
             accumulator = AudioChunkAccumulator()
             running = true
@@ -119,13 +174,27 @@ final class AudioRecorder: @unchecked Sendable {
                 self.converter = nil
                 chunkHandler = nil
                 levelHandler = nil
+                errorHandler = nil
             }
             throw error
         }
+
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleInputConfigurationChange()
+        }
+        return resolution
     }
 
     func stop() {
         guard isRunning else { return }
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+            self.configurationObserver = nil
+        }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         let delivery = lock.withLock { () -> (Data?, ChunkHandler?) in
@@ -135,6 +204,7 @@ final class AudioRecorder: @unchecked Sendable {
             converter = nil
             chunkHandler = nil
             levelHandler = nil
+            errorHandler = nil
             smoothedLevel = 0
             return (remainder, handler)
         }
@@ -143,6 +213,13 @@ final class AudioRecorder: @unchecked Sendable {
                 delivery.1?(remainder)
             }
         }
+    }
+
+    private func handleInputConfigurationChange() {
+        guard isRunning else { return }
+        let handler = lock.withLock { errorHandler }
+        stop()
+        handler?(.inputConfigurationChanged)
     }
 
     private func convertAndChunk(_ inputBuffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) {

@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let stats = LocalStatsStore.shared
     let apiKeys = LocalAPIKeyStore.shared
     let updateChecker = UpdateChecker.shared
+    let audioDevices = AudioInputDeviceCatalog()
+    private let hotkeyManager = GlobalHotkeyManager()
+    lazy var shortcutCoordinator = ShortcutCoordinator(preferences: preferences, registrar: hotkeyManager)
     lazy var dictationController = DictationController(
         state: state,
         preferences: preferences,
@@ -16,13 +19,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         apiKeys: apiKeys
     )
 
-    private let hotkeyManager = GlobalHotkeyManager()
     private var pillController: DictationPillPanelController?
     private var onboardingWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private var statusItem: NSStatusItem?
     private var primaryMenuItem: NSMenuItem?
     private var statusMenuItem: NSMenuItem?
+    private var pasteLastMenuItem: NSMenuItem?
     private var updateMenuItem: NSMenuItem?
     private var cancellables = Set<AnyCancellable>()
 
@@ -35,17 +38,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager.onPress = { [weak self] in self?.dictationController.start() }
         hotkeyManager.onRelease = { [weak self] in self?.dictationController.stop() }
         hotkeyManager.onToggle = { [weak self] in self?.dictationController.toggle() }
+        hotkeyManager.onPasteLast = { [weak self] in self?.dictationController.pasteLastTranscript() }
         hotkeyManager.onEscape = { [weak self] in self?.dictationController.cancel() ?? false }
+        shortcutCoordinator.start()
 
-        Publishers.CombineLatest(preferences.$shortcut, preferences.$dictationMode)
-            .sink { [weak self] shortcut, mode in
-                self?.hotkeyManager.register(shortcut, mode: mode)
+        preferences.$dictationMode
+            .sink { [weak self] mode in
+                self?.hotkeyManager.setDictationMode(mode)
+                guard let self else { return }
+                self.updateShortcutPresentation(
+                    dictation: self.shortcutCoordinator.dictationShortcut,
+                    pasteLast: self.shortcutCoordinator.pasteLastShortcut
+                )
             }
             .store(in: &cancellables)
+
+        Publishers.CombineLatest(
+            shortcutCoordinator.$dictationShortcut,
+            shortcutCoordinator.$pasteLastShortcut
+        )
+        .sink { [weak self] dictation, pasteLast in
+            self?.updateShortcutPresentation(dictation: dictation, pasteLast: pasteLast)
+        }
+        .store(in: &cancellables)
 
         Publishers.CombineLatest(state.$phase, state.$audioLevel)
             .throttle(for: .milliseconds(33), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] phase, level in self?.updateStatusItem(for: phase, level: level) }
+            .store(in: &cancellables)
+
+        state.$lastTranscript
+            .sink { [weak self] _ in self?.updatePasteLastAvailability() }
             .store(in: &cancellables)
 
         updateChecker.$canCheckForUpdates
@@ -103,6 +126,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(status)
         statusMenuItem = status
 
+        let pasteLast = NSMenuItem(title: "Paste Last Transcript", action: #selector(pasteLastTranscript), keyEquivalent: "")
+        pasteLast.target = self
+        pasteLast.isEnabled = false
+        menu.addItem(pasteLast)
+        pasteLastMenuItem = pasteLast
+
         menu.addItem(.separator())
         let settings = NSMenuItem(title: "Settings…", action: #selector(showPrimaryWindow), keyEquivalent: ",")
         settings.keyEquivalentModifierMask = [.command]
@@ -128,6 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         primaryMenuItem?.title = phase == .listening ? "Stop Dictation" : "Start Dictation"
         primaryMenuItem?.isEnabled = phase != .finalizing && phase != .inserting
         statusMenuItem?.title = "Status: \(phase.title)"
+        updatePasteLastAvailability()
 
         let image: NSImage?
         switch phase {
@@ -146,6 +176,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleDictation() {
         dictationController.toggle()
+    }
+
+    @objc private func pasteLastTranscript() {
+        dictationController.pasteLastTranscript()
+    }
+
+    private func updatePasteLastAvailability() {
+        pasteLastMenuItem?.isEnabled = !state.lastTranscript.isEmpty && !state.phase.isActive
+    }
+
+    private func updateShortcutPresentation(
+        dictation: KeyboardShortcut,
+        pasteLast: KeyboardShortcut
+    ) {
+        apply(dictation, to: primaryMenuItem)
+        apply(pasteLast, to: pasteLastMenuItem)
+        let behavior = preferences.dictationMode == .pushToTalk ? "Hold" : "Press"
+        statusItem?.button?.toolTip = "Quill — \(behavior) \(dictation.title) to dictate"
+    }
+
+    private func apply(_ shortcut: KeyboardShortcut, to item: NSMenuItem?) {
+        item?.keyEquivalent = shortcut.menuKeyEquivalent ?? ""
+        item?.keyEquivalentModifierMask = shortcut.modifiers.eventFlags
     }
 
     @objc private func showPrimaryWindow() {
@@ -170,6 +223,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .environmentObject(stats)
             .environmentObject(apiKeys)
             .environmentObject(updateChecker)
+            .environmentObject(shortcutCoordinator)
+            .environmentObject(audioDevices)
             .frame(width: 820, height: 590)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 820, height: 590),

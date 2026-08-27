@@ -24,4 +24,23 @@ final class GlobalHotkeyActionTests: XCTestCase {
             .ignore
         )
     }
+
+    func testPasteLastUsesPressAndIgnoresRelease() {
+        XCTAssertEqual(
+            GlobalHotkeyAction.resolve(
+                eventKind: UInt32(kEventHotKeyPressed),
+                shortcutAction: .pasteLast,
+                mode: .pushToTalk
+            ),
+            .pasteLast
+        )
+        XCTAssertEqual(
+            GlobalHotkeyAction.resolve(
+                eventKind: UInt32(kEventHotKeyReleased),
+                shortcutAction: .pasteLast,
+                mode: .toggle
+            ),
+            .ignore
+        )
+    }
 }

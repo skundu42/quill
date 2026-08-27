@@ -12,12 +12,10 @@ struct MenuBarView: View {
         } label: {
             Label(primaryActionTitle, systemImage: state.phase == .listening ? "stop.fill" : "mic.fill")
         }
-        .keyboardShortcut(.space, modifiers: .option)
-
         Divider()
 
         LabeledContent("Status", value: state.phase.title)
-        LabeledContent("Shortcut", value: preferences.shortcut.title)
+        LabeledContent("Shortcut", value: preferences.dictationShortcut.title)
         LabeledContent("Mode", value: preferences.transcriptionMode.title)
 
         if !state.lastTranscript.isEmpty {
@@ -26,6 +24,10 @@ struct MenuBarView: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(state.lastTranscript, forType: .string)
             }
+            Button("Paste Recent Dictation") {
+                controller.pasteLastTranscript()
+            }
+            .disabled(state.phase.isActive)
         }
 
         if let error = state.lastError {

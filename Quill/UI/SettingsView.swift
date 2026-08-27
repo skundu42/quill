@@ -173,7 +173,7 @@ private struct HomeView: View {
                     .foregroundStyle(.white)
 
                 HStack(spacing: 8) {
-                    Text(preferences.shortcut.title)
+                    Text(preferences.dictationShortcut.title)
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 6)
@@ -267,17 +267,28 @@ private struct HomeView: View {
 private struct DictationSettingsView: View {
     @EnvironmentObject private var preferences: AppPreferences
     @EnvironmentObject private var updateChecker: UpdateChecker
+    @EnvironmentObject private var state: AppState
+    @EnvironmentObject private var shortcuts: ShortcutCoordinator
+    @EnvironmentObject private var audioDevices: AudioInputDeviceCatalog
 
     var body: some View {
         QuillPage(title: "Dictation", subtitle: "Make Quill work the way you speak.") {
-            QuillCard(title: "How you start") {
-                QuillSettingRow(title: "Keyboard shortcut", detail: "Works from any app") {
-                    Picker("", selection: $preferences.shortcut) {
-                        ForEach(ShortcutPreset.allCases) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden()
-                    .frame(width: 150)
-                }
+            QuillCard(title: "Shortcuts") {
+                shortcutRow(
+                    title: "Dictate",
+                    detail: "Starts or stops dictation from any app",
+                    action: .dictation,
+                    shortcut: shortcuts.dictationShortcut
+                )
+
+                QuillDivider()
+
+                shortcutRow(
+                    title: "Paste last transcript",
+                    detail: "Pastes the latest completed dictation at the cursor",
+                    action: .pasteLast,
+                    shortcut: shortcuts.pasteLastShortcut
+                )
 
                 QuillDivider()
 
@@ -293,6 +304,34 @@ private struct DictationSettingsView: View {
 
                 QuillSettingRow(title: "Listening indicator", detail: "Show the live ink line while speaking") {
                     Toggle("", isOn: $preferences.showIndicator).labelsHidden()
+                }
+
+                Text("Click a shortcut, then type a key with Command, Option, Control, or Shift. Press Escape to cancel.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+            }
+
+            QuillCard(title: "Microphone") {
+                QuillSettingRow(title: "Audio input", detail: microphoneDetail) {
+                    Picker("", selection: microphoneSelection) {
+                        Text(systemDefaultTitle).tag("")
+                        if let preference = preferences.microphonePreference,
+                           audioDevices.device(withUID: preference.uid) == nil {
+                            Text("\(preference.name) — Unavailable").tag(preference.uid)
+                        }
+                        ForEach(audioDevices.devices) { device in
+                            Text(device.name).tag(device.uid)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 220)
+                }
+
+                if let error = audioDevices.lastError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
             }
 
@@ -350,6 +389,64 @@ private struct DictationSettingsView: View {
                 }
             }
         }
+        .onAppear { audioDevices.refresh() }
+    }
+
+    @ViewBuilder
+    private func shortcutRow(
+        title: String,
+        detail: String,
+        action: GlobalShortcutAction,
+        shortcut: KeyboardShortcut
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            QuillSettingRow(title: title, detail: detail) {
+                ShortcutRecorderControl(
+                    shortcut: shortcut,
+                    isEnabled: !state.phase.isActive,
+                    onRecord: { shortcuts.update($0, for: action) }
+                )
+                .frame(width: 150, height: 28)
+            }
+            if let error = shortcuts.error(for: action) {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private var microphoneSelection: Binding<String> {
+        Binding(
+            get: { preferences.microphonePreference?.uid ?? "" },
+            set: { uid in
+                guard !uid.isEmpty else {
+                    preferences.microphonePreference = nil
+                    return
+                }
+                if let device = audioDevices.device(withUID: uid) {
+                    preferences.microphonePreference = MicrophonePreference(uid: device.uid, name: device.name)
+                }
+            }
+        )
+    }
+
+    private var systemDefaultTitle: String {
+        if let name = audioDevices.defaultDevice?.name {
+            return "System Default (\(name))"
+        }
+        return "System Default"
+    }
+
+    private var microphoneDetail: String {
+        guard let preference = preferences.microphonePreference else {
+            return "Follows the macOS default input"
+        }
+        if audioDevices.device(withUID: preference.uid) == nil {
+            let fallback = audioDevices.defaultDevice?.name ?? "the system default"
+            return "\(preference.name) is unavailable; using \(fallback)"
+        }
+        return "Used for the next dictation"
     }
 
     private var styleDetail: String {

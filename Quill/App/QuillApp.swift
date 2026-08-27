@@ -13,6 +13,8 @@ struct QuillApp: App {
                 .environmentObject(LocalStatsStore.shared)
                 .environmentObject(LocalAPIKeyStore.shared)
                 .environmentObject(updateChecker)
+                .environmentObject(appDelegate.shortcutCoordinator)
+                .environmentObject(appDelegate.audioDevices)
                 .frame(width: 820, height: 590)
         }
         .commands {

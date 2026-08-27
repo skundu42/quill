@@ -24,7 +24,14 @@ struct TextInsertionTarget {
 }
 
 @MainActor
-final class TextInsertionService {
+protocol TextInsertionServing: AnyObject {
+    func rememberFrontmostTarget()
+    func captureTarget() -> TextInsertionTarget?
+    func insert(_ text: String, mode: InsertionMode, target: TextInsertionTarget?) async throws
+}
+
+@MainActor
+final class TextInsertionService: TextInsertionServing {
     private var lastExternalTarget: TextInsertionTarget?
 
     func rememberFrontmostTarget() {

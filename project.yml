@@ -39,7 +39,9 @@ targets:
     dependencies:
       - package: Sparkle
       - sdk: AVFoundation.framework
+      - sdk: AudioToolbox.framework
       - sdk: Carbon.framework
+      - sdk: CoreAudio.framework
       - sdk: ServiceManagement.framework
   QuillTests:
     type: bundle.unit-test

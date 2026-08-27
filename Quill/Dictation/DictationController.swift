@@ -26,7 +26,7 @@ final class DictationController {
     private let preferences: AppPreferences
     private let apiKeys: LocalAPIKeyStore
     private let audioRecorder: AudioRecorder
-    private let insertionService: TextInsertionService
+    private let insertionService: any TextInsertionServing
     private let stats: LocalStatsStore
 
     private var session: GeminiLiveSession?
@@ -40,6 +40,7 @@ final class DictationController {
     private var completionTask: Task<Void, Never>?
     private var finalizationTimeoutTask: Task<Void, Never>?
     private var errorResetTask: Task<Void, Never>?
+    private var pasteTask: Task<Void, Never>?
     private var sessionGeneration = UUID()
     private var insertionTarget: TextInsertionTarget?
 
@@ -49,7 +50,7 @@ final class DictationController {
         stats: LocalStatsStore,
         apiKeys: LocalAPIKeyStore,
         audioRecorder: AudioRecorder = AudioRecorder(),
-        insertionService: TextInsertionService? = nil
+        insertionService: (any TextInsertionServing)? = nil
     ) {
         self.state = state
         self.preferences = preferences
@@ -94,6 +95,35 @@ final class DictationController {
         state.phase == .listening ? stop() : start()
     }
 
+    func pasteLastTranscript() {
+        guard !state.phase.isActive else { return }
+        let transcript = state.lastTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !transcript.isEmpty else {
+            fail("No recent transcript to paste.")
+            return
+        }
+
+        resetSessionState()
+        let target = insertionService.captureTarget()
+        state.lastError = nil
+        state.phase = .inserting
+        let generation = sessionGeneration
+        pasteTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.insertionService.insert(transcript, mode: .direct, target: target)
+                guard generation == self.sessionGeneration else { return }
+                self.finishAndReturnToIdle()
+            } catch TextInsertionError.targetUnavailableCopiedToClipboard {
+                guard generation == self.sessionGeneration else { return }
+                self.fail(TextInsertionError.targetUnavailableCopiedToClipboard.localizedDescription)
+            } catch {
+                guard generation == self.sessionGeneration else { return }
+                self.fail(error.localizedDescription)
+            }
+        }
+    }
+
     @discardableResult
     func cancel() -> Bool {
         guard state.phase.isActive else { return false }
@@ -129,6 +159,7 @@ final class DictationController {
             }
 
             try audioRecorder.start(
+                microphone: preferences.microphonePreference,
                 onChunk: { [weak self] data in
                     DispatchQueue.main.async {
                         self?.receiveAudio(data, generation: generation)
@@ -137,6 +168,12 @@ final class DictationController {
                 onLevel: { [weak self] level in
                     DispatchQueue.main.async {
                         self?.receiveAudioLevel(level, generation: generation)
+                    }
+                },
+                onError: { [weak self] error in
+                    DispatchQueue.main.async {
+                        guard let self, generation == self.sessionGeneration else { return }
+                        self.fail(error.localizedDescription)
                     }
                 }
             )
@@ -353,10 +390,12 @@ final class DictationController {
         completionTask?.cancel()
         finalizationTimeoutTask?.cancel()
         errorResetTask?.cancel()
+        pasteTask?.cancel()
         connectionTask = nil
         completionTask = nil
         finalizationTimeoutTask = nil
         errorResetTask = nil
+        pasteTask = nil
         session = nil
         sessionConnected = false
         pendingAudio.removeAll(keepingCapacity: true)
