@@ -23,6 +23,32 @@ final class GeminiLiveSessionTests: XCTestCase {
         XCTAssertNil(end)
     }
 
+    func testOutboundQueuePreservesHybridAudioEndOrder() async {
+        let queue = GeminiOutboundQueue(capacity: 2)
+        let audio = Data([1, 2, 3])
+
+        XCTAssertTrue(queue.enqueue(.audio(audio)))
+        XCTAssertTrue(queue.enqueue(.audioStreamEnd))
+        queue.finish()
+
+        var iterator = queue.stream.makeAsyncIterator()
+        let first = await iterator.next()
+        let second = await iterator.next()
+        let end = await iterator.next()
+
+        XCTAssertEqual(first, .audio(audio))
+        XCTAssertEqual(second, .audioStreamEnd)
+        XCTAssertNil(end)
+    }
+
+    func testHybridEndUsesAudioStreamEndSignal() throws {
+        let payload = GeminiLiveSession.payload(for: .audioStreamEnd)
+        let realtimeInput = try XCTUnwrap(payload["realtimeInput"] as? [String: Any])
+
+        XCTAssertEqual(realtimeInput["audioStreamEnd"] as? Bool, true)
+        XCTAssertNil(realtimeInput["activityEnd"])
+    }
+
     func testOutboundQueueRejectsMessagesBeyondItsBound() async {
         let queue = GeminiOutboundQueue(capacity: 1)
 

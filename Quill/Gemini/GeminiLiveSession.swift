@@ -24,6 +24,7 @@ enum GeminiOutboundMessage: Sendable, Equatable {
     case activityStart
     case audio(Data)
     case activityEnd
+    case audioStreamEnd
 }
 
 final class GeminiOutboundQueue: Sendable {
@@ -60,6 +61,10 @@ actor GeminiLiveSession {
         let transcriptionMode: TranscriptionMode
         let languageCode: String
         let vocabulary: [String]
+
+        var usesHybridVoiceActivityDetection: Bool {
+            languageCode.isEmpty
+        }
     }
 
     enum Event: Sendable, Equatable {
@@ -89,6 +94,10 @@ actor GeminiLiveSession {
 
     nonisolated func enqueueActivityEnd() -> Bool {
         outboundQueue.enqueue(.activityEnd)
+    }
+
+    nonisolated func enqueueAudioStreamEnd() -> Bool {
+        outboundQueue.enqueue(.audioStreamEnd)
     }
 
     func connect(configuration: Configuration, onEvent: @escaping @Sendable (Event) -> Void) async throws {
@@ -159,16 +168,17 @@ actor GeminiLiveSession {
             transcription["customVocabulary"] = Array(configuration.vocabulary.prefix(1_000))
         }
 
-        return [
-            "setup": [
-                "model": "models/\(configuration.model)",
-                "generationConfig": ["responseModalities": ["TEXT"]],
-                "inputAudioTranscription": transcription,
-                "realtimeInputConfig": [
-                    "automaticActivityDetection": ["disabled": true]
-                ]
-            ]
+        var setup: [String: Any] = [
+            "model": "models/\(configuration.model)",
+            "generationConfig": ["responseModalities": ["TEXT"]],
+            "inputAudioTranscription": transcription
         ]
+        if !configuration.usesHybridVoiceActivityDetection {
+            setup["realtimeInputConfig"] = [
+                "automaticActivityDetection": ["disabled": true]
+            ]
+        }
+        return ["setup": setup]
     }
 
     static func events(in object: [String: Any]) -> [Event] {
@@ -245,7 +255,7 @@ actor GeminiLiveSession {
         try await socket.send(.string(string))
     }
 
-    private static func payload(for message: GeminiOutboundMessage) -> [String: Any] {
+    static func payload(for message: GeminiOutboundMessage) -> [String: Any] {
         switch message {
         case .activityStart:
             ["realtimeInput": ["activityStart": [:]]]
@@ -260,6 +270,8 @@ actor GeminiLiveSession {
             ]
         case .activityEnd:
             ["realtimeInput": ["activityEnd": [:]]]
+        case .audioStreamEnd:
+            ["realtimeInput": ["audioStreamEnd": true]]
         }
     }
 

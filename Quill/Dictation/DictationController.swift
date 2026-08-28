@@ -50,6 +50,7 @@ final class DictationController {
     private var pendingAudio: [Data] = []
     private var pendingAudioBytes = 0
     private var shouldEndWhenConnected = false
+    private var usesHybridVoiceActivityDetection = false
     private var completionGate = TranscriptionCompletionGate()
     private var finalSegments: [String] = []
     private var connectionTask: Task<Void, Never>?
@@ -216,6 +217,7 @@ final class DictationController {
                 languageCode: preferences.languageCode,
                 vocabulary: preferences.vocabulary
             )
+            usesHybridVoiceActivityDetection = configuration.usesHybridVoiceActivityDetection
 
             try await liveSession.connect(configuration: configuration) { [weak self] event in
                 Task { @MainActor in self?.receive(event, generation: generation) }
@@ -226,7 +228,10 @@ final class DictationController {
             }
 
             sessionConnected = true
-            guard liveSession.enqueueActivityStart() else { throw GeminiLiveError.sendQueueFull }
+            if !usesHybridVoiceActivityDetection,
+               !liveSession.enqueueActivityStart() {
+                throw GeminiLiveError.sendQueueFull
+            }
             for chunk in pendingAudio {
                 guard liveSession.enqueueAudio(chunk) else { throw GeminiLiveError.sendQueueFull }
             }
@@ -283,13 +288,19 @@ final class DictationController {
 
     private func endAudioInput(on session: GeminiLiveSession) {
         guard !completionGate.activityEnded else { return }
-        guard session.enqueueActivityEnd() else {
+        let endWasQueued = usesHybridVoiceActivityDetection
+            ? session.enqueueAudioStreamEnd()
+            : session.enqueueActivityEnd()
+        guard endWasQueued else {
             fail(GeminiLiveError.sendQueueFull.localizedDescription)
             return
         }
         completionGate.markActivityEnded()
         startFinalizationTimeout()
-        if completionGate.isReady {
+        // Hybrid VAD may have finalized earlier utterances while listening. Wait
+        // for a fresh finalization event after audioStreamEnd before completing,
+        // so the last utterance is not cut off.
+        if !usesHybridVoiceActivityDetection, completionGate.isReady {
             scheduleCompletion(immediately: completionGate.canCompleteImmediately)
         }
     }
@@ -440,6 +451,7 @@ final class DictationController {
         pendingAudio.removeAll(keepingCapacity: true)
         pendingAudioBytes = 0
         shouldEndWhenConnected = false
+        usesHybridVoiceActivityDetection = false
         completionGate = TranscriptionCompletionGate()
         finalSegments.removeAll(keepingCapacity: true)
         insertionTarget = nil
