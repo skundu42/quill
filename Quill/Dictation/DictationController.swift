@@ -315,11 +315,12 @@ final class DictationController {
             state.interimTranscript = (finalSegments + (trimmed.isEmpty ? [] : [trimmed])).joined(separator: " ")
         case .final(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-            finalSegments.append(trimmed)
-            state.interimTranscript = finalSegments.joined(separator: " ")
             completionGate.receiveFinalTranscript()
-            scheduleCompletion(immediately: completionGate.canCompleteImmediately)
+            if !trimmed.isEmpty {
+                finalSegments.append(trimmed)
+                state.interimTranscript = finalSegments.joined(separator: " ")
+            }
+            scheduleCompletion(immediately: trimmed.isEmpty || completionGate.canCompleteImmediately)
         case .turnComplete:
             guard state.phase == .finalizing else { return }
             completionGate.receiveTurnComplete()

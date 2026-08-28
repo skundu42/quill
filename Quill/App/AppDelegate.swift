@@ -120,6 +120,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    func closePrimaryWindow() {
+        settingsWindow?.orderOut(nil)
+        onboardingWindow?.orderOut(nil)
+    }
+
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = QuillStatusIcon.make()

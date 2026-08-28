@@ -87,6 +87,16 @@ final class GeminiLiveSessionTests: XCTestCase {
         XCTAssertEqual(GeminiLiveSession.events(in: object), [.final("Final words")])
     }
 
+    func testEmptyFinalTranscriptIsPreservedWithoutTurnCompletion() {
+        let object: [String: Any] = [
+            "serverContent": [
+                "inputTranscription": ["text": ""]
+            ]
+        ]
+
+        XCTAssertEqual(GeminiLiveSession.events(in: object), [.final("")])
+    }
+
     func testSnakeCaseTurnCompletionIsRecognized() {
         let object: [String: Any] = [
             "server_content": ["turn_complete": true]

@@ -18,6 +18,13 @@ struct QuillApp: App {
                 .frame(width: 820, height: 590)
         }
         .commands {
+            CommandGroup(replacing: .appTermination) {
+                Button("Close Quill Window") {
+                    appDelegate.closePrimaryWindow()
+                }
+                .keyboardShortcut("q", modifiers: .command)
+            }
+
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
                     updateChecker.checkManually()

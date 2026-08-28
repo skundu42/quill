@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import { QuillLogo } from "@/components/QuillLogo";
 import { VoiceDemo } from "@/components/VoiceDemo";
 import { latestDmgUrl, siteConfig } from "@/app/site";
@@ -70,6 +71,7 @@ export default function HomePage() {
         <nav className="desktop-nav" aria-label="Main navigation">
           <a href="#how-it-works">How it works</a>
           <a href="#privacy">Privacy</a>
+          <Link href="/blog">Blog</Link>
           <a className="github-nav-link" href={repositoryUrl} aria-label="Quill on GitHub">
             GitHub <span aria-hidden="true">↗</span>
           </a>
@@ -328,6 +330,7 @@ export default function HomePage() {
             GitHub <span aria-hidden="true">↗</span>
           </a>
           <a href="#privacy">Privacy</a>
+          <Link href="/blog">Blog</Link>
           <a href={`${repositoryUrl}/blob/main/README.md`}>Docs</a>
         </div>
         <small>

@@ -197,7 +197,10 @@ actor GeminiLiveSession {
         if let text = interim?["text"] as? String, !text.isEmpty {
             events.append(.interim(text))
         }
-        if let text = final?["text"] as? String, !text.isEmpty {
+        // The transcription service can acknowledge a silent turn with an empty
+        // finalized transcript. Preserve that event so the controller can finish
+        // the session without waiting for a turnComplete message that may not come.
+        if let text = final?["text"] as? String {
             events.append(.final(text))
         }
         if (serverContent["turnComplete"] ?? serverContent["turn_complete"]) as? Bool == true {
