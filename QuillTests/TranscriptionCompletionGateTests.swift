@@ -65,4 +65,15 @@ final class TranscriptionCompletionGateTests: XCTestCase {
         XCTAssertFalse(gate.isReady)
         XCTAssertFalse(gate.canCompleteImmediately)
     }
+
+    func testEmptyTurnCompletesAfterActivityEnds() {
+        var gate = TranscriptionCompletionGate()
+        gate.markActivityEnded()
+
+        gate.receiveTurnComplete()
+
+        XCTAssertTrue(gate.isReady)
+        XCTAssertTrue(gate.canCompleteImmediately)
+        XCTAssertTrue(gate.beginCompletion())
+    }
 }

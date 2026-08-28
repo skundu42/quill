@@ -8,7 +8,7 @@ struct TranscriptionCompletionGate {
     private(set) var completionStarted = false
 
     var isReady: Bool {
-        activityEnded && finalTranscriptReceived
+        activityEnded && (finalTranscriptReceived || turnCompleteReceived)
     }
 
     var canCompleteImmediately: Bool {
@@ -348,7 +348,9 @@ final class DictationController {
         completionTask = nil
         let transcript = finalSegments.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
-            fail("Gemini did not return a transcript. Try speaking again.")
+            // A completed turn without a final segment means Gemini detected no
+            // speech. There is nothing to insert, so end the session normally.
+            finishAndReturnToIdle()
             return
         }
 
