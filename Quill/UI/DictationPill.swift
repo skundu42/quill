@@ -5,7 +5,6 @@ import SwiftUI
 struct DictationPillView: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let onCancel: () -> Void
 
     var body: some View {
         HStack(spacing: 11) {
@@ -145,7 +144,7 @@ final class DictationPillPanelController {
     private let preferences: AppPreferences
     private var cancellables = Set<AnyCancellable>()
 
-    init(state: AppState, preferences: AppPreferences, onCancel: @escaping () -> Void) {
+    init(state: AppState, preferences: AppPreferences) {
         self.state = state
         self.preferences = preferences
         panel = NSPanel(
@@ -160,7 +159,7 @@ final class DictationPillPanelController {
         panel.hasShadow = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.ignoresMouseEvents = true
-        let hostingView = NSHostingView(rootView: DictationPillView(onCancel: onCancel).environmentObject(state))
+        let hostingView = NSHostingView(rootView: DictationPillView().environmentObject(state))
         hostingView.sizingOptions = []
         hostingView.frame = NSRect(x: 0, y: 0, width: 360, height: 58)
         hostingView.autoresizingMask = [.width, .height]
@@ -204,15 +203,8 @@ final class DictationPillPanelController {
     }
 
     private func hidePanel() {
-        guard panel.isVisible else { return }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.14
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().alphaValue = 0
-        } completionHandler: { [weak panel] in
-            panel?.orderOut(nil)
-            panel?.alphaValue = 1
-        }
+        panel.orderOut(nil)
+        panel.alphaValue = 1
     }
 
     private func positionOnActiveScreen(width: CGFloat, animated: Bool) {

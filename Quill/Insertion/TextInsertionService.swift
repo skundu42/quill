@@ -4,14 +4,12 @@ import Foundation
 
 enum TextInsertionError: LocalizedError {
     case accessibilityPermissionMissing
-    case noFocusedElement
     case clipboardWriteFailed
     case targetUnavailableCopiedToClipboard
 
     var errorDescription: String? {
         switch self {
         case .accessibilityPermissionMissing: "Quill needs Accessibility access to type into other apps."
-        case .noFocusedElement: "Quill could not find an editable text field."
         case .clipboardWriteFailed: "Quill could not write the transcript to the clipboard."
         case .targetUnavailableCopiedToClipboard: "The original text field is no longer available. Your transcript was copied to the clipboard."
         }
@@ -25,6 +23,13 @@ struct TextInsertionTarget {
 
     func usesPasteEvent() async -> Bool {
         await pasteEventClassification?.value ?? false
+    }
+
+    func matches(processIdentifier: pid_t?, focusedElement: AXUIElement?) -> Bool {
+        guard processIdentifier == self.processIdentifier,
+              let originalElement = self.focusedElement,
+              let focusedElement else { return false }
+        return CFEqual(originalElement, focusedElement)
     }
 }
 
@@ -95,6 +100,7 @@ final class TextInsertionService: TextInsertionServing {
     }
 
     func insert(_ text: String, mode: InsertionMode, target: TextInsertionTarget?) async throws {
+        try Task.checkCancellation()
         guard !text.isEmpty else { return }
 
         if mode == .clipboard {
@@ -107,12 +113,18 @@ final class TextInsertionService: TextInsertionServing {
         }
 
         guard let target,
+              let originalElement = target.focusedElement,
               target.processIdentifier != ProcessInfo.processInfo.processIdentifier,
               let application = NSRunningApplication(processIdentifier: target.processIdentifier),
               !application.isTerminated else {
             try copyToClipboard(text)
             throw TextInsertionError.targetUnavailableCopiedToClipboard
         }
+
+        // Finish classification before restoring focus, then verify the original
+        // element after the last suspension point and immediately before writing.
+        let usesPasteEvent = await target.usesPasteEvent()
+        try Task.checkCancellation()
 
         if !application.isActive {
             guard application.activate(options: []) else {
@@ -122,26 +134,20 @@ final class TextInsertionService: TextInsertionServing {
             try await Task.sleep(for: .milliseconds(150))
         }
 
-        var focusedElement = currentFocusedElement(for: target.processIdentifier)
-        var restoredFocus = false
-        if let originalElement = target.focusedElement,
-           !elementsAreEqual(focusedElement, originalElement),
-           AXUIElementSetAttributeValue(
-               originalElement,
-               kAXFocusedAttribute as CFString,
-               kCFBooleanTrue
-           ) == .success {
-            focusedElement = originalElement
-            restoredFocus = true
-        }
-
-        if restoredFocus {
+        if !elementsAreEqual(currentFocusedElement(for: target.processIdentifier), originalElement) {
+            guard AXUIElementSetAttributeValue(
+                originalElement,
+                kAXFocusedAttribute as CFString,
+                kCFBooleanTrue
+            ) == .success else {
+                try copyToClipboard(text)
+                throw TextInsertionError.targetUnavailableCopiedToClipboard
+            }
             try await Task.sleep(for: .milliseconds(50))
-            focusedElement = currentFocusedElement(for: target.processIdentifier) ?? focusedElement
         }
 
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
-              let focusedElement else {
+        try Task.checkCancellation()
+        guard hasFocus(target) else {
             try copyToClipboard(text)
             throw TextInsertionError.targetUnavailableCopiedToClipboard
         }
@@ -150,19 +156,26 @@ final class TextInsertionService: TextInsertionServing {
         // Accessibility. Web editors need a real paste event so their input model
         // receives the corresponding DOM event. The target's path is classified
         // when dictation starts so insertion does not synchronously walk the AX tree.
-        let usesPasteEvent = await target.usesPasteEvent()
         QuillLogger.insertion.info(
             "Insertion path: \(usesPasteEvent ? "paste event" : "accessibility", privacy: .public)"
         )
         if !usesPasteEvent,
            AXUIElementSetAttributeValue(
-               focusedElement,
+               originalElement,
                kAXSelectedTextAttribute as CFString,
                text as CFString
             ) == .success {
             return
         }
-        try pasteWithClipboardPreservation(text)
+        try pasteWithClipboardPreservation(text, target: target)
+    }
+
+    private func hasFocus(_ target: TextInsertionTarget) -> Bool {
+        let focusedElement = currentFocusedElement(for: target.processIdentifier)
+        return target.matches(
+            processIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            focusedElement: focusedElement
+        )
     }
 
     private func currentFocusedElement(for processIdentifier: pid_t) -> AXUIElement? {
@@ -231,7 +244,7 @@ final class TextInsertionService: TextInsertionServing {
         }
     }
 
-    private func pasteWithClipboardPreservation(_ text: String) throws {
+    private func pasteWithClipboardPreservation(_ text: String, target: TextInsertionTarget) throws {
         let pasteboard = NSPasteboard.general
         let snapshot: PasteboardSnapshot
         if let pendingClipboardRestoration,
@@ -259,6 +272,11 @@ final class TextInsertionService: TextInsertionServing {
         // A command modifier on key-up makes some web editors treat both
         // events as paste commands. Clear it after the single command key-down.
         keyUp.flags = []
+        // Reading rich clipboard contents can block. Recheck focus before posting
+        // a paste event; if it changed, leave the transcript available to copy.
+        guard hasFocus(target) else {
+            throw TextInsertionError.targetUnavailableCopiedToClipboard
+        }
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
 

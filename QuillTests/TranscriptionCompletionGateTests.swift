@@ -45,47 +45,13 @@ final class TranscriptionCompletionGateTests: XCTestCase {
         XCTAssertFalse(gate.beginCompletion())
     }
 
-    func testTurnCompleteEnablesImmediateCompletionWhenTranscriptIsReady() {
+    func testHybridFinalizationWaitsForFreshTranscript() {
         var gate = TranscriptionCompletionGate()
-        gate.markActivityEnded()
         gate.receiveFinalTranscript()
-
-        XCTAssertFalse(gate.canCompleteImmediately)
-
-        gate.receiveTurnComplete()
-
-        XCTAssertTrue(gate.canCompleteImmediately)
-    }
-
-    func testTurnCompleteAloneCannotComplete() {
-        var gate = TranscriptionCompletionGate()
-
-        gate.receiveTurnComplete()
-
+        gate.markActivityEnded(requiresFreshTranscript: true)
         XCTAssertFalse(gate.isReady)
-        XCTAssertFalse(gate.canCompleteImmediately)
-    }
-
-    func testEmptyTurnCompletesAfterActivityEnds() {
-        var gate = TranscriptionCompletionGate()
-        gate.markActivityEnded()
-
-        gate.receiveTurnComplete()
-
-        XCTAssertTrue(gate.isReady)
-        XCTAssertTrue(gate.canCompleteImmediately)
-        XCTAssertTrue(gate.beginCompletion())
-    }
-
-    func testEmptyFinalTranscriptCompletesWithoutTurnComplete() {
-        var gate = TranscriptionCompletionGate()
-        gate.markActivityEnded()
-
         gate.receiveFinalTranscript()
-
         XCTAssertTrue(gate.isReady)
-        XCTAssertFalse(gate.turnCompleteReceived)
-        XCTAssertFalse(gate.canCompleteImmediately)
         XCTAssertTrue(gate.beginCompletion())
     }
 }

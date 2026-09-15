@@ -23,6 +23,9 @@ export function SiteHeader() {
             {item.label}
           </Link>
         ))}
+        <a className="github-nav-link" href={siteConfig.repositoryUrl} aria-label="Quill on GitHub">
+          GitHub <span aria-hidden="true">↗</span>
+        </a>
       </nav>
 
       <div className="header-actions">

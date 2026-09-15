@@ -34,9 +34,16 @@ final class ShortcutRecorderButton: NSButton {
 
     override var acceptsFirstResponder: Bool { true }
 
-    override func mouseDown(with event: NSEvent) {
-        guard isEnabled else { return }
-        beginRecording()
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        target = self
+        action = #selector(beginRecording)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        target = self
+        action = #selector(beginRecording)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -56,6 +63,7 @@ final class ShortcutRecorderButton: NSButton {
         }
         shortcut = recorded
         isRecording = false
+        updateTitle()
         window?.makeFirstResponder(nil)
         onRecord?(recorded)
     }
@@ -74,7 +82,8 @@ final class ShortcutRecorderButton: NSButton {
         }
     }
 
-    private func beginRecording() {
+    @objc private func beginRecording() {
+        guard isEnabled else { return }
         isRecording = true
         title = "Type shortcut…"
         window?.makeFirstResponder(self)

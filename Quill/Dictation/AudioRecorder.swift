@@ -95,7 +95,7 @@ final class AudioRecorder: @unchecked Sendable {
     typealias LevelHandler = @Sendable (Double) -> Void
     typealias ErrorHandler = @Sendable (AudioRecorderError) -> Void
 
-    private let engine = AVAudioEngine()
+    private let engine: AVAudioEngine
     private let deviceProvider: any AudioInputDeviceProviding
     private var converter: AVAudioConverter?
     private var accumulator = AudioChunkAccumulator()
@@ -120,8 +120,12 @@ final class AudioRecorder: @unchecked Sendable {
         let converter: AVAudioConverter
     }
 
-    init(deviceProvider: any AudioInputDeviceProviding = CoreAudioInputDeviceProvider()) {
+    init(
+        deviceProvider: any AudioInputDeviceProviding = CoreAudioInputDeviceProvider(),
+        engine: AVAudioEngine = AVAudioEngine()
+    ) {
         self.deviceProvider = deviceProvider
+        self.engine = engine
     }
 
     var isRunning: Bool {
@@ -208,6 +212,11 @@ final class AudioRecorder: @unchecked Sendable {
         ) { [weak self] _ in
             self?.handleInputConfigurationChange()
         }
+        // A bound audio unit does not follow later system-default changes, so
+        // observe those directly as well as engine format/configuration changes.
+        deviceProvider.startObserving { [weak self] in
+            DispatchQueue.main.async { self?.handleInputConfigurationChange() }
+        }
         return prepared.resolution
     }
 
@@ -219,6 +228,7 @@ final class AudioRecorder: @unchecked Sendable {
 
     private func stopLocked() {
         guard isRunning else { return }
+        deviceProvider.stopObserving()
         if let configurationObserver {
             NotificationCenter.default.removeObserver(configurationObserver)
             self.configurationObserver = nil
@@ -267,26 +277,38 @@ final class AudioRecorder: @unchecked Sendable {
         guard let audioUnit = inputNode.audioUnit else {
             throw AudioRecorderError.unavailableInput
         }
-        if selection.requiresExplicitDeviceConfiguration {
-            var deviceID = AudioDeviceID(selection.device.deviceID)
-            let deviceStatus = AudioUnitSetProperty(
-                audioUnit,
-                kAudioOutputUnitProperty_CurrentDevice,
-                kAudioUnitScope_Global,
-                0,
-                &deviceID,
-                UInt32(MemoryLayout<AudioDeviceID>.size)
-            )
-            guard deviceStatus == noErr else {
-                QuillLogger.audio.error("Unable to select audio input device: \(deviceStatus)")
-                throw AudioRecorderError.deviceConfigurationFailed
-            }
+        // The audio unit retains its device across stops, including when returning
+        // from an explicit microphone to the system default or a fallback.
+        var deviceID = AudioDeviceID(selection.device.deviceID)
+        let deviceStatus = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        guard deviceStatus == noErr else {
+            QuillLogger.audio.error("Unable to select audio input device: \(deviceStatus)")
+            throw AudioRecorderError.deviceConfigurationFailed
         }
 
         let inputFormat = inputNode.outputFormat(forBus: 0)
         guard inputFormat.channelCount > 0, inputFormat.sampleRate > 0 else {
             throw AudioRecorderError.unavailableInput
         }
+        let converter = try Self.makeConverter(from: inputFormat)
+        return PreparedInput(
+            resolution: resolution,
+            selection: selection,
+            inputNode: inputNode,
+            inputFormat: inputFormat,
+            targetFormat: converter.outputFormat,
+            converter: converter
+        )
+    }
+
+    static func makeConverter(from inputFormat: AVAudioFormat) throws -> AVAudioConverter {
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
             sampleRate: 16_000,
@@ -295,14 +317,8 @@ final class AudioRecorder: @unchecked Sendable {
         ), let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             throw AudioRecorderError.unsupportedFormat
         }
-        return PreparedInput(
-            resolution: resolution,
-            selection: selection,
-            inputNode: inputNode,
-            inputFormat: inputFormat,
-            targetFormat: targetFormat,
-            converter: converter
-        )
+        converter.downmix = true
+        return converter
     }
 
     private func handleInputConfigurationChange() {
@@ -321,13 +337,10 @@ final class AudioRecorder: @unchecked Sendable {
         do {
             let devices = try deviceProvider.inputDevices()
             let defaultID = try deviceProvider.defaultInputDeviceID()
-            let audioUnitDeviceID = selection.requiresExplicitDeviceConfiguration
-                ? currentAudioUnitDeviceID()
-                : nil
             return selection.matchesCurrentRoute(
                 devices: devices,
                 defaultDeviceID: defaultID,
-                audioUnitDeviceID: audioUnitDeviceID
+                audioUnitDeviceID: currentAudioUnitDeviceID()
             )
         } catch {
             QuillLogger.audio.error("Unable to verify audio input after configuration change: \(error.localizedDescription)")
