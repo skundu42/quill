@@ -108,10 +108,12 @@ jobs:
         if: steps.release.outputs.needs_build == 'true'
         run: |
           xcodegen generate
+          # Core Audio hardware initialization hangs on hosted runners; run this integration test locally.
           xcodebuild \
             -project Quill.xcodeproj \
             -scheme Quill \
             -destination 'platform=macOS' \
+            -skip-testing:QuillTests/AudioRecorderTests/testPreparingDefaultAndFallbackReplacesThePreviousDevice \
             CODE_SIGNING_ALLOWED=NO \
             test
 
