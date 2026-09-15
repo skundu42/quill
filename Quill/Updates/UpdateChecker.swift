@@ -43,12 +43,17 @@ final class UpdateChecker: ObservableObject {
     private let controller: SPUStandardUpdaterController
     private let feedDelegate: UpdateFeedDelegate
     private var canCheckObservation: NSKeyValueObservation?
+    private var automaticUpdateObservations: [NSKeyValueObservation] = []
 
     @Published private(set) var canCheckForUpdates = false
-    @Published var automaticUpdatesEnabled = true {
-        didSet {
-            controller.updater.automaticallyChecksForUpdates = automaticUpdatesEnabled
-            controller.updater.automaticallyDownloadsUpdates = automaticUpdatesEnabled
+    var automaticUpdatesEnabled: Bool {
+        get {
+            controller.updater.automaticallyChecksForUpdates
+                && controller.updater.automaticallyDownloadsUpdates
+        }
+        set {
+            controller.updater.automaticallyChecksForUpdates = newValue
+            controller.updater.automaticallyDownloadsUpdates = newValue
         }
     }
 
@@ -63,14 +68,14 @@ final class UpdateChecker: ObservableObject {
         controller.updater.lastUpdateCheckDate
     }
 
-    private init() {
+    init(controller: SPUStandardUpdaterController? = nil) {
         let configuration = UpdateConfiguration.resolve(
             environment: ProcessInfo.processInfo.environment,
             defaults: .standard,
             releaseCandidateFeedURL: Bundle.main.object(forInfoDictionaryKey: "QuillRCFeedURL") as? String
         )
         feedDelegate = UpdateFeedDelegate(configuration: configuration)
-        controller = SPUStandardUpdaterController(
+        self.controller = controller ?? SPUStandardUpdaterController(
             startingUpdater: Self.shouldStartUpdater(
                 isRunningTests: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil,
                 environment: ProcessInfo.processInfo.environment
@@ -78,8 +83,16 @@ final class UpdateChecker: ObservableObject {
             updaterDelegate: feedDelegate,
             userDriverDelegate: nil
         )
-        automaticUpdatesEnabled = controller.updater.automaticallyChecksForUpdates
-        canCheckObservation = controller.updater.observe(
+        let updater = self.controller.updater
+        automaticUpdateObservations = [
+            \SPUUpdater.automaticallyChecksForUpdates,
+            \SPUUpdater.automaticallyDownloadsUpdates,
+        ].map { keyPath in
+            updater.observe(keyPath, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor in self?.objectWillChange.send() }
+            }
+        }
+        canCheckObservation = updater.observe(
             \.canCheckForUpdates,
             options: [.initial, .new]
         ) { [weak self] _, change in

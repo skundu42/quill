@@ -1,9 +1,38 @@
 import XCTest
+@preconcurrency import Sparkle
 @testable import Quill
 
 final class UpdateCheckerTests: XCTestCase {
     private let feedOverride = ["QUILL_UPDATE_FEED": "http://localhost:8000/appcast.xml"]
     private let releaseCandidateFeedURL = "https://example.com/rc/appcast.xml"
+
+    @MainActor
+    func testAutomaticUpdatesReflectSparkleChangesWithoutOverwritingThem() async {
+        let updater = TestUpdateSettings()
+        let checker = UpdateChecker(controller: TestUpdaterController(settings: updater))
+        XCTAssertTrue(checker.automaticUpdatesEnabled)
+        await Task.yield() // Drain the initial canCheckForUpdates observation.
+
+        let changed = expectation(description: "Sparkle preference change reaches SwiftUI")
+        let observation = checker.objectWillChange.sink { changed.fulfill() }
+        updater.automaticallyDownloadsUpdates = false
+        await fulfillment(of: [changed], timeout: 1)
+        observation.cancel()
+
+        XCTAssertFalse(checker.automaticUpdatesEnabled)
+        XCTAssertTrue(updater.automaticallyChecksForUpdates)
+        XCTAssertFalse(updater.automaticallyDownloadsUpdates)
+
+        checker.automaticUpdatesEnabled = true
+        XCTAssertTrue(updater.automaticallyChecksForUpdates)
+        XCTAssertTrue(updater.automaticallyDownloadsUpdates)
+        updater.automaticallyChecksForUpdates = false
+        XCTAssertFalse(checker.automaticUpdatesEnabled)
+        XCTAssertTrue(updater.automaticallyDownloadsUpdates)
+        checker.automaticUpdatesEnabled = false
+        XCTAssertFalse(updater.automaticallyChecksForUpdates)
+        XCTAssertFalse(updater.automaticallyDownloadsUpdates)
+    }
 
     func testUpdaterNeverStartsWhileHostingTests() {
         XCTAssertFalse(UpdateChecker.shouldStartUpdater(
@@ -119,5 +148,51 @@ final class UpdateCheckerTests: XCTestCase {
             defaults.removePersistentDomain(forName: suiteName)
         }
         return defaults
+    }
+}
+
+@MainActor
+private final class TestUpdaterController: SPUStandardUpdaterController {
+    private let settings: SPUUpdater
+
+    init(settings: SPUUpdater) {
+        self.settings = settings
+        super.init(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil)
+    }
+
+    override var updater: SPUUpdater { settings }
+}
+
+// Keep preference writes in memory so this check cannot change the user's defaults.
+@MainActor
+private final class TestUpdateSettings: SPUUpdater {
+    private var checks = true
+    private var downloads = true
+
+    init() {
+        super.init(
+            hostBundle: .main,
+            applicationBundle: .main,
+            userDriver: SPUStandardUserDriver(hostBundle: .main, delegate: nil),
+            delegate: nil
+        )
+    }
+
+    override var automaticallyChecksForUpdates: Bool {
+        get { checks }
+        set {
+            willChangeValue(forKey: "automaticallyChecksForUpdates")
+            checks = newValue
+            didChangeValue(forKey: "automaticallyChecksForUpdates")
+        }
+    }
+
+    override var automaticallyDownloadsUpdates: Bool {
+        get { downloads }
+        set {
+            willChangeValue(forKey: "automaticallyDownloadsUpdates")
+            downloads = newValue
+            didChangeValue(forKey: "automaticallyDownloadsUpdates")
+        }
     }
 }

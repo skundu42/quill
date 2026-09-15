@@ -99,9 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        pillController = DictationPillPanelController(state: state, preferences: preferences) { [weak self] in
-            _ = self?.dictationController.cancel()
-        }
+        pillController = DictationPillPanelController(state: state, preferences: preferences)
 
         dictationController.prewarmAudio()
         DispatchQueue.main.async { [weak self] in self?.showPrimaryWindow() }
@@ -118,6 +116,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showPrimaryWindow()
         return true
+    }
+
+    func closePrimaryWindow() {
+        settingsWindow?.orderOut(nil)
+        onboardingWindow?.orderOut(nil)
     }
 
     private func setupStatusItem() {
@@ -224,7 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item?.keyEquivalentModifierMask = shortcut.modifiers.eventFlags
     }
 
-    @objc private func showPrimaryWindow() {
+    @objc func showPrimaryWindow() {
         dictationController.rememberInsertionTarget()
         if preferences.onboardingComplete {
             showSettings()
@@ -289,6 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.title = "Welcome to Quill"
+        window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
@@ -303,8 +307,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func finishOnboarding() {
         preferences.onboardingComplete = true
 
-        // Hiding avoids AppKit releasing the window while its close animation is active.
-        // The window is retained for the app's lifetime and released safely at termination.
         onboardingWindow?.orderOut(nil)
         showSettings()
     }

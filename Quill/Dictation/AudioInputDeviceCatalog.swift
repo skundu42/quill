@@ -192,21 +192,19 @@ struct ActiveAudioInputSelection: Equatable {
         followsSystemDefault = preference == nil || resolution.usedFallback
     }
 
-    var requiresExplicitDeviceConfiguration: Bool {
-        !followsSystemDefault
-    }
-
     func matchesCurrentRoute(
         devices: [AudioInputDevice],
         defaultDeviceID: AudioDeviceID,
         audioUnitDeviceID: AudioDeviceID?
     ) -> Bool {
-        if followsSystemDefault {
-            return devices.first(where: { $0.deviceID == defaultDeviceID })?.uid == device.uid
-        }
-        return devices.contains(where: {
+        guard devices.contains(where: {
             $0.uid == device.uid && $0.deviceID == audioUnitDeviceID
-        })
+        }) else { return false }
+        return !followsSystemDefault || AudioInputResolution.resolve(
+            preference: nil,
+            devices: devices,
+            defaultDeviceID: defaultDeviceID
+        )?.device.uid == device.uid
     }
 }
 

@@ -9,6 +9,18 @@ enum GlobalHotkeyAction: Equatable {
     case pasteLast
     case ignore
 
+    static func isEscapeCancellation(
+        _ event: NSEvent,
+        mode: DictationMode,
+        dictationShortcut: KeyboardShortcut?
+    ) -> Bool {
+        guard event.keyCode == UInt16(kVK_Escape) else { return false }
+        let modifiers = ShortcutModifiers(eventFlags: event.modifierFlags)
+        return modifiers.isEmpty || (
+            mode == .pushToTalk && modifiers.isSubset(of: dictationShortcut?.modifiers ?? [])
+        )
+    }
+
     static func resolve(
         eventKind: UInt32,
         shortcutAction: GlobalShortcutAction = .dictation,
@@ -182,19 +194,21 @@ final class GlobalHotkeyManager: GlobalShortcutRegistering {
 
     private func installEscapeMonitors() {
         globalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == UInt16(kVK_Escape),
-               ShortcutModifiers(eventFlags: event.modifierFlags).isEmpty {
-                Task { @MainActor in _ = self?.onEscape?() }
-            }
+            guard event.keyCode == UInt16(kVK_Escape) else { return }
+            Task { @MainActor in _ = self?.handleEscape(event) }
         }
         localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == UInt16(kVK_Escape),
-               ShortcutModifiers(eventFlags: event.modifierFlags).isEmpty,
-               self?.onEscape?() == true {
-                return nil
-            }
-            return event
+            self?.handleEscape(event) == true ? nil : event
         }
+    }
+
+    private func handleEscape(_ event: NSEvent) -> Bool {
+        guard GlobalHotkeyAction.isEscapeCancellation(
+            event,
+            mode: dictationMode,
+            dictationShortcut: registrations[.dictation]?.shortcut
+        ) else { return false }
+        return onEscape?() ?? false
     }
 }
 

@@ -7,17 +7,24 @@ struct QuillApp: App {
 
     var body: some Scene {
         Settings {
-            SettingsView(controller: appDelegate.dictationController)
-                .environmentObject(AppPreferences.shared)
-                .environmentObject(AppState.shared)
-                .environmentObject(LocalStatsStore.shared)
-                .environmentObject(LocalAPIKeyStore.shared)
-                .environmentObject(updateChecker)
-                .environmentObject(appDelegate.shortcutCoordinator)
-                .environmentObject(appDelegate.audioDevices)
-                .frame(width: 820, height: 590)
+            // AppDelegate owns the windows; this scene hosts the app commands.
+            EmptyView()
         }
         .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    appDelegate.showPrimaryWindow()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+
+            CommandGroup(replacing: .appTermination) {
+                Button("Close Quill Window") {
+                    appDelegate.closePrimaryWindow()
+                }
+                .keyboardShortcut("q", modifiers: .command)
+            }
+
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
                     updateChecker.checkManually()

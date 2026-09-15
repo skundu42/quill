@@ -1,8 +1,17 @@
 name: Release macOS DMG
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (vX.Y.Z or vX.Y.Z-rc.N)
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
@@ -11,6 +20,7 @@ concurrency:
   # Release jobs share one moving RC appcast, so they must publish serially.
   group: quill-release-publisher
   cancel-in-progress: false
+  queue: max
 
 jobs:
   build-and-publish:
@@ -21,17 +31,26 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
 
       - name: Validate release metadata
         id: release
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           ./scripts/test-release-metadata.sh
+          python3 scripts/test-publish-release.py
+          case "$RELEASE_TAG" in
+            *-rc.*) IS_PRERELEASE=true ;;
+            *) IS_PRERELEASE=false ;;
+          esac
           ./scripts/release-metadata.sh "$RELEASE_TAG" "$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          ./scripts/publish-release.sh prepare "$RELEASE_TAG" "$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
 
       - name: Validate release secrets
+        if: steps.release.outputs.needs_build == 'true'
         env:
           CERTIFICATE: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
@@ -48,9 +67,11 @@ jobs:
           : "${SPARKLE_ED_PRIVATE_KEY:?Missing SPARKLE_ED_PRIVATE_KEY}"
 
       - name: Install XcodeGen
+        if: steps.release.outputs.needs_build == 'true'
         run: brew install xcodegen
 
       - name: Import Developer ID certificate
+        if: steps.release.outputs.needs_build == 'true'
         env:
           CERTIFICATE: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
@@ -84,16 +105,20 @@ jobs:
           echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
       - name: Run tests
+        if: steps.release.outputs.needs_build == 'true'
         run: |
           xcodegen generate
+          # Core Audio hardware initialization hangs on hosted runners; run this integration test locally.
           xcodebuild \
             -project Quill.xcodeproj \
             -scheme Quill \
             -destination 'platform=macOS' \
+            -skip-testing:QuillTests/AudioRecorderTests/testPreparingDefaultAndFallbackReplacesThePreviousDevice \
             CODE_SIGNING_ALLOWED=NO \
             test
 
       - name: Build signed universal app
+        if: steps.release.outputs.needs_build == 'true'
         env:
           MARKETING_VERSION: ${{ steps.release.outputs.marketing_version }}
           RELEASE_LABEL: ${{ steps.release.outputs.release_label }}
@@ -104,8 +129,7 @@ jobs:
           ./scripts/build.sh
 
       - name: Create and sign DMG
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        if: steps.release.outputs.needs_build == 'true'
         run: |
           SAFE_TAG=$(printf '%s' "$RELEASE_TAG" | tr -c 'A-Za-z0-9._-' '-')
           DMG_PATH="$GITHUB_WORKSPACE/dist/Quill-${SAFE_TAG}-macOS.dmg"
@@ -120,6 +144,7 @@ jobs:
           echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
 
       - name: Notarize DMG
+        if: steps.release.outputs.needs_build == 'true'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -135,29 +160,24 @@ jobs:
           codesign --verify --verbose=2 "$DMG_PATH"
 
       - name: Generate signed Sparkle appcast
+        if: steps.release.outputs.needs_build == 'true'
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_CHANNEL: ${{ steps.release.outputs.release_channel }}
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          SPARKLE_VERSION=2.9.6
-          SPARKLE_ARCHIVE="$RUNNER_TEMP/Sparkle-$SPARKLE_VERSION.tar.xz"
-          SPARKLE_TOOLS="$RUNNER_TEMP/sparkle-tools"
+          SPARKLE_TOOLS="$GITHUB_WORKSPACE/.build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin"
+          test -x "$SPARKLE_TOOLS/generate_appcast"
           APPCAST_DIR="$RUNNER_TEMP/quill-appcast"
           KEY_FILE="$RUNNER_TEMP/quill-sparkle-ed-key"
           RC_CHANNEL_TAG=quill-rc-channel
 
-          curl --fail --location --silent --show-error \
-            --output "$SPARKLE_ARCHIVE" \
-            "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
-          mkdir -p "$SPARKLE_TOOLS" "$APPCAST_DIR"
-          tar -xJf "$SPARKLE_ARCHIVE" -C "$SPARKLE_TOOLS"
+          mkdir -p "$APPCAST_DIR"
 
           # Seed generation with the moving channel feed so RC testers see the
           # full path from stable -> RC -> final, while stable clients filter
           # out entries marked with the rc Sparkle channel.
-          if gh release view "$RC_CHANNEL_TAG" >/dev/null 2>&1; then
+          if [ "$(gh release view "$RC_CHANNEL_TAG" --json isDraft --jq .isDraft 2>/dev/null || true)" = false ]; then
             gh release download "$RC_CHANNEL_TAG" \
               --pattern appcast.xml \
               --dir "$APPCAST_DIR" \
@@ -171,7 +191,7 @@ jobs:
           trap 'rm -P "$KEY_FILE" 2>/dev/null || true' EXIT
 
           if [ "$RELEASE_CHANNEL" = rc ]; then
-            "$SPARKLE_TOOLS/bin/generate_appcast" \
+            "$SPARKLE_TOOLS/generate_appcast" \
               --ed-key-file "$KEY_FILE" \
               --channel rc \
               --maximum-versions 5 \
@@ -179,7 +199,7 @@ jobs:
               --link "https://github.com/${{ github.repository }}/releases" \
               "$APPCAST_DIR"
           else
-            "$SPARKLE_TOOLS/bin/generate_appcast" \
+            "$SPARKLE_TOOLS/generate_appcast" \
               --ed-key-file "$KEY_FILE" \
               --maximum-versions 5 \
               --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
@@ -192,29 +212,11 @@ jobs:
           test -f "$APPCAST_DIR/appcast.xml"
           echo "APPCAST_PATH=$APPCAST_DIR/appcast.xml" >> "$GITHUB_ENV"
 
-      - name: Attach DMG and appcast to release
+      - name: Publish ready release and advance RC channel
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          LATEST_DMG_PATH="$GITHUB_WORKSPACE/dist/Quill-macOS.dmg"
-          cp "$DMG_PATH" "$LATEST_DMG_PATH"
-          gh release upload "$RELEASE_TAG" "$DMG_PATH" "$LATEST_DMG_PATH" "$APPCAST_PATH" --clobber
-
-      - name: Publish moving RC channel appcast
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          RC_CHANNEL_TAG=quill-rc-channel
-          if ! gh release view "$RC_CHANNEL_TAG" >/dev/null 2>&1; then
-            gh release create "$RC_CHANNEL_TAG" \
-              --target "$GITHUB_SHA" \
-              --title "Quill release-candidate update channel" \
-              --notes "Machine-managed Sparkle feed for opted-in release-candidate testers." \
-              --prerelease
-          fi
-
-          gh release upload "$RC_CHANNEL_TAG" "$APPCAST_PATH" --clobber
+          IS_PRERELEASE: ${{ steps.release.outputs.is_prerelease }}
+        run: ./scripts/publish-release.sh publish "$RELEASE_TAG" "$IS_PRERELEASE"
 
       - name: Remove temporary signing keychain
         if: always()

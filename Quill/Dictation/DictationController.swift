@@ -4,27 +4,19 @@ import Foundation
 struct TranscriptionCompletionGate {
     private(set) var activityEnded = false
     private(set) var finalTranscriptReceived = false
-    private(set) var turnCompleteReceived = false
     private(set) var completionStarted = false
 
     var isReady: Bool {
         activityEnded && finalTranscriptReceived
     }
 
-    var canCompleteImmediately: Bool {
-        isReady && turnCompleteReceived
-    }
-
-    mutating func markActivityEnded() {
+    mutating func markActivityEnded(requiresFreshTranscript: Bool = false) {
         activityEnded = true
+        if requiresFreshTranscript { finalTranscriptReceived = false }
     }
 
     mutating func receiveFinalTranscript() {
         finalTranscriptReceived = true
-    }
-
-    mutating func receiveTurnComplete() {
-        turnCompleteReceived = true
     }
 
     mutating func beginCompletion() -> Bool {
@@ -50,14 +42,15 @@ final class DictationController {
     private var pendingAudio: [Data] = []
     private var pendingAudioBytes = 0
     private var shouldEndWhenConnected = false
+    private var usesHybridVoiceActivityDetection = false
     private var completionGate = TranscriptionCompletionGate()
     private var finalSegments: [String] = []
     private var connectionTask: Task<Void, Never>?
-    private var completionTask: Task<Void, Never>?
+    private(set) var completionTask: Task<Void, Never>?
     private var finalizationTimeoutTask: Task<Void, Never>?
     private var errorResetTask: Task<Void, Never>?
     private var pasteTask: Task<Void, Never>?
-    private var sessionGeneration = UUID()
+    private(set) var sessionGeneration = UUID()
     private var insertionTarget: TextInsertionTarget?
 
     init(
@@ -216,6 +209,7 @@ final class DictationController {
                 languageCode: preferences.languageCode,
                 vocabulary: preferences.vocabulary
             )
+            usesHybridVoiceActivityDetection = configuration.usesHybridVoiceActivityDetection
 
             try await liveSession.connect(configuration: configuration) { [weak self] event in
                 Task { @MainActor in self?.receive(event, generation: generation) }
@@ -226,7 +220,10 @@ final class DictationController {
             }
 
             sessionConnected = true
-            guard liveSession.enqueueActivityStart() else { throw GeminiLiveError.sendQueueFull }
+            if !usesHybridVoiceActivityDetection,
+               !liveSession.enqueueActivityStart() {
+                throw GeminiLiveError.sendQueueFull
+            }
             for chunk in pendingAudio {
                 guard liveSession.enqueueAudio(chunk) else { throw GeminiLiveError.sendQueueFull }
             }
@@ -281,20 +278,26 @@ final class DictationController {
         endAudioInput(on: session)
     }
 
-    private func endAudioInput(on session: GeminiLiveSession) {
+    func endAudioInput(on session: GeminiLiveSession) {
         guard !completionGate.activityEnded else { return }
-        guard session.enqueueActivityEnd() else {
+        let endWasQueued = usesHybridVoiceActivityDetection
+            ? session.enqueueAudioStreamEnd()
+            : session.enqueueActivityEnd()
+        guard endWasQueued else {
             fail(GeminiLiveError.sendQueueFull.localizedDescription)
             return
         }
-        completionGate.markActivityEnded()
+        completionGate.markActivityEnded(requiresFreshTranscript: usesHybridVoiceActivityDetection)
         startFinalizationTimeout()
-        if completionGate.isReady {
-            scheduleCompletion(immediately: completionGate.canCompleteImmediately)
+        // Hybrid VAD may have finalized earlier utterances while listening. Wait
+        // for a fresh finalization event after audioStreamEnd before completing,
+        // so the last utterance is not cut off.
+        if !usesHybridVoiceActivityDetection, completionGate.isReady {
+            scheduleCompletion()
         }
     }
 
-    private func receive(_ event: GeminiLiveSession.Event, generation: UUID) {
+    func receive(_ event: GeminiLiveSession.Event, generation: UUID) {
         guard generation == sessionGeneration,
               state.phase == .listening || state.phase == .finalizing else { return }
 
@@ -304,17 +307,16 @@ final class DictationController {
             state.interimTranscript = (finalSegments + (trimmed.isEmpty ? [] : [trimmed])).joined(separator: " ")
         case .final(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-            finalSegments.append(trimmed)
-            state.interimTranscript = finalSegments.joined(separator: " ")
             completionGate.receiveFinalTranscript()
-            scheduleCompletion(immediately: completionGate.canCompleteImmediately)
-        case .turnComplete:
-            guard state.phase == .finalizing else { return }
-            completionGate.receiveTurnComplete()
-            if completionGate.canCompleteImmediately {
-                scheduleCompletion(immediately: true)
+            if !trimmed.isEmpty {
+                finalSegments.append(trimmed)
+                state.interimTranscript = finalSegments.joined(separator: " ")
             }
+            scheduleCompletion(immediately: trimmed.isEmpty)
+        case .turnComplete:
+            // Input transcription is independent of model-turn completion and
+            // may arrive later, including an empty final for a silent utterance.
+            break
         case .error(let message):
             fail(message)
         }
@@ -332,7 +334,7 @@ final class DictationController {
                     return
                 }
             }
-            guard let self, generation == self.sessionGeneration else { return }
+            guard let self, !Task.isCancelled, generation == self.sessionGeneration else { return }
             await self.completeTranscription()
         }
     }
@@ -343,12 +345,13 @@ final class DictationController {
         guard state.phase == .finalizing, completionGate.beginCompletion() else { return }
         state.phase = .inserting
         finalizationTimeoutTask?.cancel()
-        // This method runs inside completionTask. Clear the stored handle without
-        // cancelling the task that still has to disconnect and insert the text.
-        completionTask = nil
+        let generation = sessionGeneration
+        let target = insertionTarget
+        let mode = preferences.insertionMode
         let transcript = finalSegments.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
-            fail("Gemini did not return a transcript. Try speaking again.")
+            // An explicitly empty final transcript acknowledges a silent utterance.
+            finishAndReturnToIdle()
             return
         }
 
@@ -357,17 +360,25 @@ final class DictationController {
         if let completedSession { await completedSession.disconnect() }
 
         do {
+            try Task.checkCancellation()
+            guard generation == sessionGeneration else { return }
             try await insertionService.insert(
                 transcript,
-                mode: preferences.insertionMode,
-                target: insertionTarget
+                mode: mode,
+                target: target
             )
+            try Task.checkCancellation()
+            guard generation == sessionGeneration else { return }
             recordCompletedTranscript(transcript)
             finishAndReturnToIdle()
+        } catch is CancellationError {
+            return
         } catch TextInsertionError.targetUnavailableCopiedToClipboard {
+            guard !Task.isCancelled, generation == sessionGeneration else { return }
             recordCompletedTranscript(transcript)
             fail(TextInsertionError.targetUnavailableCopiedToClipboard.localizedDescription)
         } catch {
+            guard !Task.isCancelled, generation == sessionGeneration else { return }
             fail(error.localizedDescription)
         }
     }
@@ -438,6 +449,7 @@ final class DictationController {
         pendingAudio.removeAll(keepingCapacity: true)
         pendingAudioBytes = 0
         shouldEndWhenConnected = false
+        usesHybridVoiceActivityDetection = false
         completionGate = TranscriptionCompletionGate()
         finalSegments.removeAll(keepingCapacity: true)
         insertionTarget = nil

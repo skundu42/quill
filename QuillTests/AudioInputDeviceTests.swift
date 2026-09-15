@@ -46,20 +46,24 @@ final class AudioInputDeviceTests: XCTestCase {
         ))
     }
 
-    func testSystemDefaultDoesNotRequireExplicitDeviceConfiguration() {
+    func testSystemDefaultRequiresTheResolvedAudioUnitRoute() {
         let resolution = AudioInputResolution(device: builtIn, usedFallback: false)
         let selection = ActiveAudioInputSelection(preference: nil, resolution: resolution)
 
-        XCTAssertFalse(selection.requiresExplicitDeviceConfiguration)
         XCTAssertTrue(selection.matchesCurrentRoute(
             devices: [builtIn, studio],
             defaultDeviceID: builtIn.deviceID,
-            audioUnitDeviceID: nil
+            audioUnitDeviceID: builtIn.deviceID
+        ))
+        XCTAssertFalse(selection.matchesCurrentRoute(
+            devices: [builtIn, studio],
+            defaultDeviceID: builtIn.deviceID,
+            audioUnitDeviceID: studio.deviceID
         ))
         XCTAssertFalse(selection.matchesCurrentRoute(
             devices: [builtIn, studio],
             defaultDeviceID: studio.deviceID,
-            audioUnitDeviceID: nil
+            audioUnitDeviceID: builtIn.deviceID
         ))
     }
 
@@ -68,7 +72,6 @@ final class AudioInputDeviceTests: XCTestCase {
         let resolution = AudioInputResolution(device: studio, usedFallback: false)
         let selection = ActiveAudioInputSelection(preference: preference, resolution: resolution)
 
-        XCTAssertTrue(selection.requiresExplicitDeviceConfiguration)
         XCTAssertTrue(selection.matchesCurrentRoute(
             devices: [builtIn, studio],
             defaultDeviceID: builtIn.deviceID,
@@ -86,11 +89,21 @@ final class AudioInputDeviceTests: XCTestCase {
         let resolution = AudioInputResolution(device: builtIn, usedFallback: true)
         let selection = ActiveAudioInputSelection(preference: preference, resolution: resolution)
 
-        XCTAssertFalse(selection.requiresExplicitDeviceConfiguration)
         XCTAssertTrue(selection.matchesCurrentRoute(
             devices: [builtIn],
             defaultDeviceID: builtIn.deviceID,
-            audioUnitDeviceID: nil
+            audioUnitDeviceID: builtIn.deviceID
+        ))
+    }
+
+    func testFallbackRouteRemainsValidWithoutASystemDefault() {
+        let resolution = AudioInputResolution(device: builtIn, usedFallback: false)
+        let selection = ActiveAudioInputSelection(preference: nil, resolution: resolution)
+
+        XCTAssertTrue(selection.matchesCurrentRoute(
+            devices: [builtIn, studio],
+            defaultDeviceID: kAudioObjectUnknown,
+            audioUnitDeviceID: builtIn.deviceID
         ))
     }
 }
@@ -114,7 +127,7 @@ final class AudioInputDeviceCatalogTests: XCTestCase {
     }
 }
 
-private final class FakeAudioInputDeviceProvider: AudioInputDeviceProviding, @unchecked Sendable {
+final class FakeAudioInputDeviceProvider: AudioInputDeviceProviding, @unchecked Sendable {
     var devices: [AudioInputDevice]
     var defaultDeviceID: AudioDeviceID
     private var handler: (@Sendable () -> Void)?

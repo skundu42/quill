@@ -19,15 +19,6 @@ enum DictationPhase: Equatable {
         }
     }
 
-    var menuBarSymbol: String {
-        switch self {
-        case .idle: "pencil.tip"
-        case .listening: "waveform"
-        case .finalizing, .inserting: "ellipsis"
-        case .error: "exclamationmark.triangle.fill"
-        }
-    }
-
     var isActive: Bool {
         switch self {
         case .listening, .finalizing, .inserting: true

@@ -1,9 +1,7 @@
 import Image from "next/image";
-import { QuillLogo } from "@/components/QuillLogo";
+import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 import { VoiceDemo } from "@/components/VoiceDemo";
 import { latestDmgUrl, siteConfig } from "@/app/site";
-
-const repositoryUrl = siteConfig.repositoryUrl;
 
 const structuredData = {
   "@context": "https://schema.org",
@@ -61,32 +59,7 @@ export default function HomePage() {
         Skip to content
       </a>
 
-      <header className="site-header shell">
-        <a className="brand" href="#top" aria-label="Quill home">
-          <QuillLogo priority />
-          <span>Quill</span>
-        </a>
-
-        <nav className="desktop-nav" aria-label="Main navigation">
-          <a href="#how-it-works">How it works</a>
-          <a href="#privacy">Privacy</a>
-          <a className="github-nav-link" href={repositoryUrl} aria-label="Quill on GitHub">
-            GitHub <span aria-hidden="true">↗</span>
-          </a>
-        </nav>
-
-        <div className="header-actions">
-          <a className="header-download" href={latestDmgUrl} aria-label="Download the latest Quill DMG from GitHub">
-            Download <span aria-hidden="true">↓</span>
-          </a>
-          <a className="header-cta" href={repositoryUrl} aria-label="Star Quill on GitHub">
-            Star
-            <span className="arrow-box" aria-hidden="true">
-              ★
-            </span>
-          </a>
-        </div>
-      </header>
+      <SiteHeader />
 
       <main id="main">
         <section className="hero shell" id="top">
@@ -317,24 +290,7 @@ export default function HomePage() {
         </section>
       </main>
 
-      <footer className="site-footer shell">
-        <a className="brand footer-brand" href="#top">
-          <QuillLogo />
-          <span>Quill</span>
-        </a>
-        <p>Open-source voice typing for macOS.</p>
-        <div className="footer-links">
-          <a href={repositoryUrl}>
-            GitHub <span aria-hidden="true">↗</span>
-          </a>
-          <a href="#privacy">Privacy</a>
-          <a href={`${repositoryUrl}/blob/main/README.md`}>Docs</a>
-        </div>
-        <small>
-          © 2026 Quill. Apache-2.0. <span aria-hidden="true">·</span> Built by{" "}
-          <a href="https://x.com/SandipanKundu42">Sandipan Kundu</a>
-        </small>
-      </footer>
+      <SiteFooter />
     </>
   );
 }

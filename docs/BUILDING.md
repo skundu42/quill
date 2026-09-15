@@ -29,11 +29,17 @@ The release script expects a valid **Developer ID Application** signing identity
 
 ## Automated GitHub releases
 
-Publishing a GitHub release with a tag such as `v0.1.0` automatically runs `.github/workflows/release.yml`. The workflow tests Quill, sets the app version from the release tag, builds a universal signed app, creates a drag-to-Applications DMG, notarizes it with Apple, signs it for Sparkle, generates `appcast.xml`, and attaches both files to the release.
+Push a tag such as `v0.1.0` to run `.github/workflows/release.yml`, or run **Release macOS DMG** from GitHub Actions with an existing tag. The workflow tests Quill, sets the app version from the tag, builds a universal signed app, creates and notarizes a DMG, and generates a signed `appcast.xml` using the resolved Sparkle package's tools.
+
+The workflow uploads all assets to a draft release before publishing it and marking a stable release latest. This keeps the website download and installed apps' update feed working throughout the build. You may prepare release notes in a draft for the tag; leave publication to the workflow.
+
+Release runs queue instead of cancelling one another. Incomplete drafts can be rebuilt; already published releases retain their original binaries and signatures. Unpublished tags must be newer than the current stable release, so an older unfinished tag cannot replace a newer stable release.
+
+A retry can finish updating the RC feed after publication when its history is available, or finish creating its first draft. If replacement of a published channel asset fails after deleting the old `appcast.xml`, restore the channel's last known appcast before retrying. The workflow fails rather than guessing which historical release should replace missing channel history.
 
 ## Release candidates
 
-Release candidates use tags in the form `vX.Y.Z-rc.N`, starting at `rc.1`. Create the GitHub release as a **prerelease**. The workflow rejects an RC tag on a normal release and rejects a stable tag on a prerelease, preventing an accidental public rollout.
+Release candidates use tags in the form `vX.Y.Z-rc.N`, starting at `rc.1`. Push the tag and the workflow creates a **prerelease** automatically. If you prepare a draft yourself, mark it as a prerelease. The workflow rejects an existing release whose prerelease setting disagrees with the tag, preventing an accidental public rollout.
 
 The workflow publishes RC entries to Sparkle's `rc` channel and updates a permanent, prerelease-only `quill-rc-channel` feed. Normal Quill installations continue to use GitHub's latest stable release and do not allow the `rc` channel.
 
@@ -79,6 +85,13 @@ Paste the copied value into `DEVELOPER_ID_CERTIFICATE_BASE64`. The certificate i
 The matching Sparkle public key is pinned in Quill's `Info.plist`. Keep an offline backup of the private key: published copies require it to verify every future update.
 
 ## Run the tests
+
+The release checks simulate GitHub locally and do not publish anything:
+
+```sh
+./scripts/test-release-metadata.sh
+python3 scripts/test-publish-release.py
+```
 
 ```sh
 xcodebuild \
