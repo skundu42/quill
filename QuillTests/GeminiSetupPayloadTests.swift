@@ -2,7 +2,7 @@ import XCTest
 @testable import Quill
 
 final class GeminiSetupPayloadTests: XCTestCase {
-    func testAutomaticLanguageUsesSmartTranscriptionAndHybridActivityDetection() throws {
+    func testAutomaticLanguageUsesSmartTranscriptionAndManualActivityDetection() throws {
         let configuration = GeminiLiveSession.Configuration(
             apiKey: "not-used-in-payload",
             model: "gemini-3.5-transcribe-live",
@@ -20,8 +20,9 @@ final class GeminiSetupPayloadTests: XCTestCase {
         XCTAssertEqual(transcription["languageCodes"] as? [String], [])
         XCTAssertEqual(transcription["customVocabulary"] as? [String], ["SwiftUI", "Kubernetes"])
 
-        XCTAssertNil(setup["realtimeInputConfig"])
-        XCTAssertTrue(configuration.usesHybridVoiceActivityDetection)
+        let realtime = try XCTUnwrap(setup["realtimeInputConfig"] as? [String: Any])
+        let detection = try XCTUnwrap(realtime["automaticActivityDetection"] as? [String: Any])
+        XCTAssertEqual(detection["disabled"] as? Bool, true)
     }
 
     func testLanguageHintUsesManualActivityDetection() throws {
@@ -41,6 +42,41 @@ final class GeminiSetupPayloadTests: XCTestCase {
         let realtime = try XCTUnwrap(setup["realtimeInputConfig"] as? [String: Any])
         let detection = try XCTUnwrap(realtime["automaticActivityDetection"] as? [String: Any])
         XCTAssertEqual(detection["disabled"] as? Bool, true)
-        XCTAssertFalse(configuration.usesHybridVoiceActivityDetection)
+    }
+
+    func testModelResourceAcceptsBareAndFullyQualifiedIDsWithWhitespace() throws {
+        for model in ["gemini-3.5-transcribe-live", "models/gemini-3.5-transcribe-live", " \nmodels/gemini-3.5-transcribe-live\t"] {
+            let configuration = GeminiLiveSession.Configuration(
+                apiKey: "not-used-in-payload",
+                model: model,
+                transcriptionMode: .smart,
+                languageCode: "",
+                vocabulary: []
+            )
+            let setup = try XCTUnwrap(GeminiLiveSession.setupPayload(for: configuration)["setup"] as? [String: Any])
+            XCTAssertEqual(setup["model"] as? String, "models/gemini-3.5-transcribe-live")
+        }
+    }
+
+    func testEmptyModelIsRejectedBeforeOpeningConnection() async {
+        for model in ["", " \n", "models/", " models/ "] {
+            let configuration = GeminiLiveSession.Configuration(
+                apiKey: "not-a-real-key",
+                model: model,
+                transcriptionMode: .smart,
+                languageCode: "",
+                vocabulary: []
+            )
+            do {
+                try await GeminiLiveSession().connect(configuration: configuration) { _ in
+                    XCTFail("An invalid model must not open a connection.")
+                }
+                XCTFail("An invalid model must fail before connecting.")
+            } catch GeminiLiveError.invalidModel {
+                // Expected validation failure; no network request was made.
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
     }
 }

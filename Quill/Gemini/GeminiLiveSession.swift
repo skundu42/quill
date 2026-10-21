@@ -2,6 +2,7 @@ import Foundation
 
 enum GeminiLiveError: LocalizedError {
     case invalidURL
+    case invalidModel
     case connectionTimedOut
     case invalidResponse
     case sendQueueFull
@@ -11,6 +12,7 @@ enum GeminiLiveError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidURL: "Quill could not construct the Gemini connection URL."
+        case .invalidModel: "Enter a Gemini model ID in Models, such as gemini-3.5-transcribe-live."
         case .connectionTimedOut: "Gemini took too long to start the live session. Check your connection and try again."
         case .invalidResponse: "Gemini returned an unreadable response."
         case .sendQueueFull: "The connection is too slow to keep up with your audio. Try again on a more stable connection."
@@ -24,7 +26,6 @@ enum GeminiOutboundMessage: Sendable, Equatable {
     case activityStart
     case audio(Data)
     case activityEnd
-    case audioStreamEnd
 }
 
 final class GeminiOutboundQueue: Sendable {
@@ -62,8 +63,9 @@ actor GeminiLiveSession {
         let languageCode: String
         let vocabulary: [String]
 
-        var usesHybridVoiceActivityDetection: Bool {
-            languageCode.isEmpty
+        var modelResource: String {
+            let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.hasPrefix("models/") ? trimmed : "models/\(trimmed)"
         }
     }
 
@@ -79,6 +81,7 @@ actor GeminiLiveSession {
     private var receiveTask: Task<Void, Never>?
     private var sendTask: Task<Void, Never>?
     private var eventHandler: (@Sendable (Event) -> Void)?
+    private var apiKey = ""
 
     init(outboundQueue: GeminiOutboundQueue = GeminiOutboundQueue()) {
         self.outboundQueue = outboundQueue
@@ -96,13 +99,11 @@ actor GeminiLiveSession {
         outboundQueue.enqueue(.activityEnd)
     }
 
-    nonisolated func enqueueAudioStreamEnd() -> Bool {
-        outboundQueue.enqueue(.audioStreamEnd)
-    }
-
     func connect(configuration: Configuration, onEvent: @escaping @Sendable (Event) -> Void) async throws {
         guard socket == nil else { throw GeminiLiveError.disconnected }
+        guard configuration.modelResource != "models/" else { throw GeminiLiveError.invalidModel }
         eventHandler = onEvent
+        apiKey = configuration.apiKey
 
         var components = URLComponents(string: "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent")
         components?.queryItems = [URLQueryItem(name: "key", value: configuration.apiKey)]
@@ -134,10 +135,15 @@ actor GeminiLiveSession {
                 }
             }
         } catch {
-            if ContinuousClock.now >= setupDeadline {
+            let closeReason = task.closeReason
+            let failure = Self.connectionError(for: error, closeReason: closeReason, apiKey: configuration.apiKey)
+            disconnect()
+            if Task.isCancelled { throw CancellationError() }
+            if ContinuousClock.now >= setupDeadline,
+               closeReason == nil || closeReason == Data("setup timeout".utf8) {
                 throw GeminiLiveError.connectionTimedOut
             }
-            throw error
+            throw failure
         }
 
         sendTask = Task { [weak self] in
@@ -157,6 +163,7 @@ actor GeminiLiveSession {
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         eventHandler = nil
+        apiKey = ""
     }
 
     static func setupPayload(for configuration: Configuration) -> [String: Any] {
@@ -168,22 +175,22 @@ actor GeminiLiveSession {
             transcription["customVocabulary"] = Array(configuration.vocabulary.prefix(1_000))
         }
 
-        var setup: [String: Any] = [
-            "model": "models/\(configuration.model)",
+        let setup: [String: Any] = [
+            "model": configuration.modelResource,
             "generationConfig": ["responseModalities": ["TEXT"]],
-            "inputAudioTranscription": transcription
-        ]
-        if !configuration.usesHybridVoiceActivityDetection {
-            setup["realtimeInputConfig"] = [
+            "inputAudioTranscription": transcription,
+            // Both shortcut modes have explicit start/stop boundaries. Language
+            // detection is independent of who controls those boundaries.
+            "realtimeInputConfig": [
                 "automaticActivityDetection": ["disabled": true]
             ]
-        }
+        ]
         return ["setup": setup]
     }
 
-    static func events(in object: [String: Any]) -> [Event] {
+    static func events(in object: [String: Any], apiKey: String = "") -> [Event] {
         if let errorMessage = errorMessage(in: object) {
-            return [.error(errorMessage)]
+            return [.error(serverMessage(errorMessage, apiKey: apiKey))]
         }
 
         guard let serverContent = (object["serverContent"] ?? object["server_content"]) as? [String: Any] else {
@@ -218,7 +225,9 @@ actor GeminiLiveSession {
         } catch is CancellationError {
             return
         } catch {
-            failConnection(error.localizedDescription)
+            if !Task.isCancelled {
+                failConnection(error)
+            }
         }
     }
 
@@ -228,7 +237,7 @@ actor GeminiLiveSession {
             while !Task.isCancelled {
                 let message = try await socket.receive()
                 let object = try Self.decode(message)
-                for event in Self.events(in: object) {
+                for event in Self.events(in: object, apiKey: apiKey) {
                     eventHandler?(event)
                 }
             }
@@ -236,19 +245,43 @@ actor GeminiLiveSession {
             return
         } catch {
             if !Task.isCancelled {
-                failConnection(error.localizedDescription)
+                failConnection(error)
             }
         }
     }
 
-    private func failConnection(_ message: String) {
+    private func failConnection(_ error: Error) {
         guard let eventHandler else { return }
-        self.eventHandler = nil
-        outboundQueue.finish()
-        receiveTask?.cancel()
-        socket?.cancel(with: .goingAway, reason: nil)
-        socket = nil
-        eventHandler(.error(message))
+        let failure = Self.connectionError(for: error, closeReason: socket?.closeReason, apiKey: apiKey)
+        disconnect()
+        eventHandler(.error(failure.localizedDescription))
+    }
+
+    static func connectionError(for error: Error, closeReason: Data?, apiKey: String) -> GeminiLiveError {
+        // URLSession often reports only "Socket is not connected" when Gemini
+        // rejects a session. The WebSocket close frame contains the real cause.
+        if let closeReason, let reason = String(data: closeReason, encoding: .utf8),
+           !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .server(serverMessage(reason, apiKey: apiKey))
+        }
+        if let liveError = error as? GeminiLiveError {
+            if case .server(let message) = liveError {
+                return .server(serverMessage(message, apiKey: apiKey))
+            }
+            return liveError
+        }
+        return .server("Gemini connection failed: \(serverMessage(error.localizedDescription, apiKey: apiKey))")
+    }
+
+    private static func serverMessage(_ message: String, apiKey: String) -> String {
+        var safeMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !apiKey.isEmpty {
+            safeMessage = safeMessage.replacingOccurrences(of: apiKey, with: "[redacted]")
+        }
+        if safeMessage.lowercased().contains("prepayment credits are depleted") {
+            return "Gemini project credits are depleted. Add credits at https://ai.studio/projects or save an API key from a funded project in Models."
+        }
+        return safeMessage.isEmpty ? "Gemini rejected the live session." : safeMessage
     }
 
     private func sendJSON(_ object: [String: Any]) async throws {
@@ -273,8 +306,6 @@ actor GeminiLiveSession {
             ]
         case .activityEnd:
             ["realtimeInput": ["activityEnd": [:]]]
-        case .audioStreamEnd:
-            ["realtimeInput": ["audioStreamEnd": true]]
         }
     }
 

@@ -27,7 +27,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.quill.voice
         PRODUCT_NAME: Quill
-        MARKETING_VERSION: 0.1.0
+        MARKETING_VERSION: 1.1.0
         CURRENT_PROJECT_VERSION: 1
         CODE_SIGN_STYLE: Automatic
         ENABLE_HARDENED_RUNTIME: YES

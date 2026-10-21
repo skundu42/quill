@@ -16,9 +16,9 @@ struct SettingsView: View {
             Group {
                 switch selection {
                 case .home:
-                    HomeView(controller: controller) { selection = .apiKey }
-                case .apiKey:
-                    APIKeyView()
+                    HomeView(controller: controller) { selection = .models }
+                case .models:
+                    ModelsView()
                 case .dictation:
                     DictationSettingsView()
                 case .vocabulary:
@@ -36,7 +36,7 @@ struct SettingsView: View {
 
 private enum QuillDestination: String, CaseIterable, Identifiable {
     case home = "Home"
-    case apiKey = "API Key"
+    case models = "Models"
     case dictation = "Dictation"
     case vocabulary = "Vocabulary"
     case privacy = "Privacy & Access"
@@ -46,7 +46,7 @@ private enum QuillDestination: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .home: "house.fill"
-        case .apiKey: "key.fill"
+        case .models: "cpu"
         case .dictation: "waveform"
         case .vocabulary: "text.book.closed.fill"
         case .privacy: "lock.shield.fill"
@@ -129,12 +129,14 @@ private struct HomeView: View {
     @EnvironmentObject private var preferences: AppPreferences
     @EnvironmentObject private var stats: LocalStatsStore
     @EnvironmentObject private var apiKeys: LocalAPIKeyStore
+    @ObservedObject private var barkModel = BarkModelManager.shared
     let controller: DictationController
-    let onOpenAPIKey: () -> Void
+    let onOpenModels: () -> Void
 
     var body: some View {
         QuillPage(title: "Good to have you here", subtitle: "Quill is ready wherever your cursor is.") {
             statusCard
+            LastDictationErrorCard()
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("ON THIS MAC")
@@ -162,7 +164,7 @@ private struct HomeView: View {
                         .fill(statusColor)
                         .frame(width: 8, height: 8)
                         .shadow(color: statusColor.opacity(0.65), radius: 5)
-                    Text(apiKeys.hasKey ? state.phase.title.uppercased() : "SETUP NEEDED")
+                    Text(isModelReady ? phaseTitle.uppercased() : "SETUP NEEDED")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .tracking(1.3)
                         .foregroundStyle(.white.opacity(0.62))
@@ -190,7 +192,7 @@ private struct HomeView: View {
                 .frame(width: 112, height: 42)
 
             Button(actionTitle) {
-                apiKeys.hasKey ? controller.toggle() : onOpenAPIKey()
+                isModelReady ? controller.toggle() : onOpenModels()
             }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -242,25 +244,43 @@ private struct HomeView: View {
     }
 
     private var statusColor: Color {
-        guard apiKeys.hasKey else { return .orange }
+        guard isModelReady else { return .orange }
         if case .error = state.phase { return .orange }
         return state.phase == .idle ? QuillBrand.signal : .white
     }
 
     private var statusHeadline: String {
-        guard apiKeys.hasKey else { return "Add your API key to start dictating" }
+        guard isModelReady else {
+            return preferences.transcriptionProvider == .bark
+                ? "Set up Bark to start dictating"
+                : "Connect Gemini to start dictating"
+        }
         return switch state.phase {
         case .idle: "Speak. Quill will write."
         case .listening: "Listening to you…"
-        case .finalizing: "Polishing your words…"
+        case .finalizing: preferences.transcriptionProvider == .bark ? "Transcribing your words…" : "Polishing your words…"
         case .inserting: "Putting it at your cursor…"
         case .error: "Quill needs your attention"
         }
     }
 
     private var actionTitle: String {
-        guard apiKeys.hasKey else { return "Add API key" }
+        guard isModelReady else { return "Set up model" }
         return state.phase == .listening ? "Stop" : "Start dictating"
+    }
+
+    private var isModelReady: Bool {
+        switch preferences.transcriptionProvider {
+        case .bark: BarkModelManager.isSupported && barkModel.isReady
+        case .gemini: apiKeys.hasKey && !preferences.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private var phaseTitle: String {
+        if case .error = state.phase { return "Needs attention" }
+        return state.phase == .finalizing && preferences.transcriptionProvider == .bark
+            ? "Transcribing"
+            : state.phase.title
     }
 }
 
@@ -336,12 +356,18 @@ private struct DictationSettingsView: View {
             }
 
             QuillCard(title: "Your words") {
+                if preferences.transcriptionProvider == .bark {
+                    Text("Bark transcribes English verbatim. Writing style and language settings apply only to Gemini.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 QuillSettingRow(title: "Writing style", detail: styleDetail) {
                     Picker("", selection: $preferences.transcriptionMode) {
                         ForEach(TranscriptionMode.allCases) { Text($0.title).tag($0) }
                     }
                     .labelsHidden()
                     .frame(width: 150)
+                    .disabled(preferences.transcriptionProvider != .gemini)
                 }
 
                 QuillDivider()
@@ -352,6 +378,7 @@ private struct DictationSettingsView: View {
                     }
                     .labelsHidden()
                     .frame(width: 190)
+                    .disabled(preferences.transcriptionProvider != .gemini)
                 }
 
                 QuillDivider()
@@ -467,7 +494,12 @@ private struct VocabularyView: View {
     @State private var newPhrase = ""
 
     var body: some View {
-        QuillPage(title: "Vocabulary", subtitle: "Teach Quill the names and terms you use.") {
+        QuillPage(title: "Vocabulary", subtitle: "Teach Gemini the names and terms you use.") {
+            if preferences.transcriptionProvider == .bark {
+                Text("Custom vocabulary is available with Gemini. Your saved terms will be used when you switch to Gemini in Models.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
             QuillCard {
                 HStack(spacing: 10) {
                     TextField("Add a name or technical term", text: $newPhrase)
@@ -484,6 +516,7 @@ private struct VocabularyView: View {
                     .foregroundStyle(.secondary)
                     .padding(.top, 2)
             }
+            .disabled(preferences.transcriptionProvider != .gemini)
 
             QuillCard(title: "Saved terms") {
                 if preferences.vocabulary.isEmpty {
@@ -516,6 +549,7 @@ private struct VocabularyView: View {
                     }
                 }
             }
+            .disabled(preferences.transcriptionProvider != .gemini)
         }
     }
 
@@ -530,42 +564,170 @@ private struct VocabularyView: View {
     }
 }
 
-private struct APIKeyView: View {
+private struct ModelsView: View {
+    var body: some View {
+        QuillPage(title: "Models", subtitle: "Use Bark on this Mac or connect your own Gemini model.") {
+            LastDictationErrorCard()
+            ModelSetupView()
+        }
+    }
+}
+
+private struct LastDictationErrorCard: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        if let error = state.lastError {
+            QuillCard {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.orange)
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Last dictation error")
+                            .font(.system(size: 14, weight: .bold))
+                        Text(error)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Button("Dismiss") { state.lastError = nil }
+                        .controlSize(.small)
+                        .fixedSize()
+                        .accessibilityLabel("Dismiss last dictation error")
+                }
+            }
+        }
+    }
+}
+
+struct ModelSetupView: View {
+    @EnvironmentObject private var preferences: AppPreferences
     @EnvironmentObject private var apiKeys: LocalAPIKeyStore
+    @ObservedObject private var state = AppState.shared
+    @ObservedObject private var barkModel = BarkModelManager.shared
     @State private var apiKey = ""
     @State private var keyError: String?
 
     var body: some View {
-        QuillPage(title: "API Key", subtitle: "Connect Quill to Gemini with your own key.") {
-            QuillCard(title: "Gemini API key") {
-                HStack(spacing: 10) {
-                    SecureField(apiKeys.hasKey ? "Paste a replacement key" : "Paste your API key", text: $apiKey)
-                        .textFieldStyle(.roundedBorder)
-                    Button(apiKeys.hasKey ? "Replace Key" : "Save Key", action: saveKey)
-                        .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-
-                if apiKeys.hasKey {
-                    Label("Saved locally. It remains until you replace it.", systemImage: "key.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 4)
-                }
-
-                if let keyError {
-                    Text(keyError)
-                        .font(.caption)
-                        .foregroundStyle(.red)
+        VStack(alignment: .leading, spacing: 16) {
+            Picker("Transcription model", selection: $preferences.transcriptionProvider) {
+                ForEach(TranscriptionProvider.allCases) { provider in
+                    Text(provider.title).tag(provider)
                 }
             }
+            .disabled(state.phase.isActive)
 
-            QuillCard(title: "Get a key") {
-                Link(
-                    destination: URL(string: "https://aistudio.google.com/app/apikey")!
-                ) {
-                    Label("Open Google AI Studio", systemImage: "arrow.up.right.square")
-                }
+            switch preferences.transcriptionProvider {
+            case .bark: barkSetup
+            case .gemini: geminiSetup
             }
+        }
+        .onChange(of: preferences.transcriptionProvider) { _, _ in
+            apiKey = ""
+            keyError = nil
+        }
+    }
+
+    private var barkSetup: some View {
+        QuillCard(title: "Underdog Bark 3.0") {
+            Text("English transcription on your Mac. Bark keeps your words as spoken, without Smart cleanup, and works offline after setup.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            Text("Up to five minutes per dictation. Text appears after you stop speaking. The first transcription after launching can take several minutes while the model loads.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !BarkModelManager.isSupported {
+                Label("Bark requires Apple Silicon and macOS 15 or later. Choose Gemini on this Mac.", systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if barkModel.isReady {
+                Label("Ready on this Mac", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.secondary)
+                Button("Reinstall model") {
+                    Task { await barkModel.prepare(reinstall: true) }
+                }
+                .disabled(state.phase.isActive)
+            } else if barkModel.isDownloading {
+                ProgressView(value: barkModel.progress)
+                Text(barkModel.status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Button("Download Bark · about 202 MB") {
+                    Task { await barkModel.prepare() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(QuillBrand.ink)
+                Text("One-time model download. No API key or Python installation needed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let error = barkModel.error {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 12) {
+                Link("Model by ConwayResearch", destination: URL(string: "https://huggingface.co/ConwayResearch/Underdog-Bark-3.0")!)
+                Link("CC BY 4.0 license", destination: URL(string: "https://huggingface.co/ConwayResearch/Underdog-Bark-3.0/blob/\(BarkModelFiles.revision)/coreml/LICENSE")!)
+            }
+            .font(.caption)
+        }
+    }
+
+    private var geminiSetup: some View {
+        QuillCard(title: "Gemini") {
+            Text("Audio streams to Google for transcription. Smart cleanup, language selection, and custom vocabulary are available with Gemini.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                SecureField(apiKeys.hasKey ? "Paste a replacement API key" : "Paste your Gemini API key", text: $apiKey)
+                    .textFieldStyle(.roundedBorder)
+                Button(apiKeys.hasKey ? "Replace Key" : "Save Key", action: saveKey)
+                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .fixedSize()
+            }
+            .disabled(state.phase.isActive)
+
+            if apiKeys.hasKey {
+                Label("API key saved locally until you replace it.", systemImage: "key.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Gemini model ID").font(.caption.weight(.semibold))
+                TextField("gemini-3.5-transcribe-live", text: $preferences.model)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(state.phase.isActive)
+                Text("Use a Gemini Live model that supports input transcription.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let keyError {
+                Text(keyError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            Link(destination: URL(string: "https://aistudio.google.com/app/apikey")!) {
+                Label("Get a key in Google AI Studio", systemImage: "arrow.up.right.square")
+            }
+            .font(.caption)
         }
     }
 

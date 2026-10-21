@@ -66,7 +66,7 @@ struct DictationPillView: View {
     private var pillText: String {
         switch state.phase {
         case .listening: state.interimTranscript.isEmpty ? "Listening" : state.interimTranscript
-        case .finalizing: "Polishing…"
+        case .finalizing: "Transcribing…"
         case .inserting: "Inserting…"
         case .error(let message): message
         case .idle: "Ready"

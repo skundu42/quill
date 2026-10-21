@@ -12,6 +12,7 @@ final class AppPreferences: ObservableObject {
         static let showIndicator = "showIndicator"
         static let dictationMode = "dictationMode"
         static let transcriptionMode = "transcriptionMode"
+        static let transcriptionProvider = "transcriptionProvider"
         static let insertionMode = "insertionMode"
         static let legacyShortcut = "shortcut"
         static let dictationShortcut = "dictationShortcut"
@@ -29,6 +30,7 @@ final class AppPreferences: ObservableObject {
     @Published var showIndicator: Bool { didSet { defaults.set(showIndicator, forKey: Key.showIndicator) } }
     @Published var dictationMode: DictationMode { didSet { defaults.set(dictationMode.rawValue, forKey: Key.dictationMode) } }
     @Published var transcriptionMode: TranscriptionMode { didSet { defaults.set(transcriptionMode.rawValue, forKey: Key.transcriptionMode) } }
+    @Published var transcriptionProvider: TranscriptionProvider { didSet { defaults.set(transcriptionProvider.rawValue, forKey: Key.transcriptionProvider) } }
     @Published var insertionMode: InsertionMode { didSet { defaults.set(insertionMode.rawValue, forKey: Key.insertionMode) } }
     @Published var dictationShortcut: KeyboardShortcut { didSet { persist(dictationShortcut, forKey: Key.dictationShortcut) } }
     @Published var pasteLastShortcut: KeyboardShortcut { didSet { persist(pasteLastShortcut, forKey: Key.pasteLastShortcut) } }
@@ -53,6 +55,8 @@ final class AppPreferences: ObservableObject {
         showIndicator = defaults.object(forKey: Key.showIndicator) as? Bool ?? true
         dictationMode = DictationMode(rawValue: defaults.string(forKey: Key.dictationMode) ?? "") ?? .pushToTalk
         transcriptionMode = TranscriptionMode(rawValue: defaults.string(forKey: Key.transcriptionMode) ?? "") ?? .smart
+        transcriptionProvider = TranscriptionProvider(rawValue: defaults.string(forKey: Key.transcriptionProvider) ?? "")
+            ?? (defaults.bool(forKey: Key.onboardingComplete) ? .gemini : .bark)
         insertionMode = InsertionMode(rawValue: defaults.string(forKey: Key.insertionMode) ?? "") ?? .direct
         dictationShortcut = Self.loadShortcut(
             defaults: defaults,
@@ -69,6 +73,7 @@ final class AppPreferences: ObservableObject {
         vocabulary = defaults.stringArray(forKey: Key.vocabulary) ?? []
         model = defaults.string(forKey: Key.model) ?? "gemini-3.5-transcribe-live"
 
+        defaults.set(transcriptionProvider.rawValue, forKey: Key.transcriptionProvider)
         defaults.set(Self.encode(dictationShortcut), forKey: Key.dictationShortcut)
         defaults.set(Self.encode(pasteLastShortcut), forKey: Key.pasteLastShortcut)
         defaults.removeObject(forKey: Key.legacyShortcut)

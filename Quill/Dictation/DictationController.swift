@@ -10,9 +10,8 @@ struct TranscriptionCompletionGate {
         activityEnded && finalTranscriptReceived
     }
 
-    mutating func markActivityEnded(requiresFreshTranscript: Bool = false) {
+    mutating func markActivityEnded() {
         activityEnded = true
-        if requiresFreshTranscript { finalTranscriptReceived = false }
     }
 
     mutating func receiveFinalTranscript() {
@@ -37,12 +36,15 @@ final class DictationController {
     private let insertionService: any TextInsertionServing
     private let stats: LocalStatsStore
 
+    private let barkTranscriber: any BarkTranscribing
+    private var activeProvider: TranscriptionProvider = .gemini
+    private var barkAudio = Data()
+    private(set) var barkTranscriptionTask: Task<Void, Never>?
     private var session: GeminiLiveSession?
     private var sessionConnected = false
     private var pendingAudio: [Data] = []
     private var pendingAudioBytes = 0
     private var shouldEndWhenConnected = false
-    private var usesHybridVoiceActivityDetection = false
     private var completionGate = TranscriptionCompletionGate()
     private var finalSegments: [String] = []
     private var connectionTask: Task<Void, Never>?
@@ -59,7 +61,8 @@ final class DictationController {
         stats: LocalStatsStore,
         apiKeys: LocalAPIKeyStore,
         audioRecorder: AudioRecorder = AudioRecorder(),
-        insertionService: (any TextInsertionServing)? = nil
+        insertionService: (any TextInsertionServing)? = nil,
+        barkTranscriber: any BarkTranscribing = BarkTranscriber.shared
     ) {
         self.state = state
         self.preferences = preferences
@@ -67,6 +70,7 @@ final class DictationController {
         self.audioRecorder = audioRecorder
         self.insertionService = insertionService ?? TextInsertionService()
         self.stats = stats
+        self.barkTranscriber = barkTranscriber
     }
 
     func rememberInsertionTarget() {
@@ -89,6 +93,7 @@ final class DictationController {
     func start() {
         guard state.phase == .idle || isErrorPhase else { return }
         resetSessionState()
+        activeProvider = preferences.transcriptionProvider
         insertionTarget = insertionService.captureTarget()
         state.resetTranscript()
         state.phase = .listening
@@ -165,8 +170,17 @@ final class DictationController {
 
     private func beginSession(generation: UUID) async {
         do {
-            guard let apiKey = apiKeys.value(), !apiKey.isEmpty else {
-                throw GeminiLiveError.server("Add your Gemini API key in Privacy & Access.")
+            let apiKey = apiKeys.value() ?? ""
+            if activeProvider == .gemini {
+                guard !apiKey.isEmpty else {
+                    throw GeminiLiveError.server("Add your Gemini API key in Models.")
+                }
+                guard !preferences.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw GeminiLiveError.server("Enter a Gemini model in Models.")
+                }
+            } else {
+                guard BarkModelManager.isSupported else { throw BarkError.unsupported }
+                guard BarkModelManager.shared.isReady, BarkModelFiles.isInstalled else { throw BarkError.modelNotInstalled }
             }
 
             let microphoneAllowed = await Permissions.requestMicrophoneAccess()
@@ -200,16 +214,19 @@ final class DictationController {
                 }
             )
 
+            // Bark consumes the complete in-memory recording after the stop marker.
+            // It does not open a network session or require an API key.
+            guard activeProvider == .gemini else { return }
+
             let liveSession = GeminiLiveSession()
             session = liveSession
             let configuration = GeminiLiveSession.Configuration(
                 apiKey: apiKey,
-                model: preferences.model,
+                model: preferences.model.trimmingCharacters(in: .whitespacesAndNewlines),
                 transcriptionMode: preferences.transcriptionMode,
                 languageCode: preferences.languageCode,
                 vocabulary: preferences.vocabulary
             )
-            usesHybridVoiceActivityDetection = configuration.usesHybridVoiceActivityDetection
 
             try await liveSession.connect(configuration: configuration) { [weak self] event in
                 Task { @MainActor in self?.receive(event, generation: generation) }
@@ -220,8 +237,7 @@ final class DictationController {
             }
 
             sessionConnected = true
-            if !usesHybridVoiceActivityDetection,
-               !liveSession.enqueueActivityStart() {
+            if !liveSession.enqueueActivityStart() {
                 throw GeminiLiveError.sendQueueFull
             }
             for chunk in pendingAudio {
@@ -248,7 +264,13 @@ final class DictationController {
               !completionGate.activityEnded,
               state.phase == .listening || state.phase == .finalizing else { return }
 
-        if sessionConnected, let session {
+        if activeProvider == .bark {
+            guard barkAudio.count + data.count <= BarkTranscriber.maximumAudioBytes else {
+                fail(BarkError.recordingTooLong.localizedDescription)
+                return
+            }
+            barkAudio.append(data)
+        } else if sessionConnected, let session {
             guard session.enqueueAudio(data) else {
                 fail(GeminiLiveError.sendQueueFull.localizedDescription)
                 return
@@ -271,6 +293,10 @@ final class DictationController {
         guard generation == sessionGeneration,
               state.phase == .finalizing,
               !completionGate.activityEnded else { return }
+        if activeProvider == .bark {
+            finishBarkAudio(generation: generation)
+            return
+        }
         guard sessionConnected, let session else {
             shouldEndWhenConnected = true
             return
@@ -278,21 +304,41 @@ final class DictationController {
         endAudioInput(on: session)
     }
 
+    func finishBarkAudio(generation: UUID) {
+        guard generation == sessionGeneration, state.phase == .finalizing, !completionGate.activityEnded else { return }
+        completionGate.markActivityEnded()
+        let audio = barkAudio
+        barkAudio = Data()
+        let transcriber = barkTranscriber
+        // Core ML may specialize the encoder again after an app or OS restart.
+        // Escape remains available while that first local inference is loading.
+        startFinalizationTimeout(seconds: 600)
+        barkTranscriptionTask = Task { [weak self] in
+            do {
+                let text = try await transcriber.transcribe(pcm: audio)
+                try Task.checkCancellation()
+                guard let self, generation == self.sessionGeneration else { return }
+                self.receive(.final(text), generation: generation)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self, generation == self.sessionGeneration else { return }
+                self.fail(error.localizedDescription)
+            }
+        }
+    }
+
     func endAudioInput(on session: GeminiLiveSession) {
         guard !completionGate.activityEnded else { return }
-        let endWasQueued = usesHybridVoiceActivityDetection
-            ? session.enqueueAudioStreamEnd()
-            : session.enqueueActivityEnd()
-        guard endWasQueued else {
+        guard session.enqueueActivityEnd() else {
             fail(GeminiLiveError.sendQueueFull.localizedDescription)
             return
         }
-        completionGate.markActivityEnded(requiresFreshTranscript: usesHybridVoiceActivityDetection)
+        completionGate.markActivityEnded()
         startFinalizationTimeout()
-        // Hybrid VAD may have finalized earlier utterances while listening. Wait
-        // for a fresh finalization event after audioStreamEnd before completing,
-        // so the last utterance is not cut off.
-        if !usesHybridVoiceActivityDetection, completionGate.isReady {
+        // A finalized transcript can arrive before the queued stop marker.
+        // Preserve it while still waiting for all recorded audio to be sent.
+        if completionGate.isReady {
             scheduleCompletion()
         }
     }
@@ -389,17 +435,19 @@ final class DictationController {
         state.interimTranscript = ""
     }
 
-    private func startFinalizationTimeout() {
+    private func startFinalizationTimeout(seconds: Int = 8) {
         finalizationTimeoutTask?.cancel()
         let generation = sessionGeneration
         finalizationTimeoutTask = Task { [weak self] in
             do {
-                try await Task.sleep(for: .seconds(8))
+                try await Task.sleep(for: .seconds(seconds))
             } catch {
                 return
             }
             guard let self, generation == self.sessionGeneration else { return }
-            self.fail("Transcription timed out. Check your connection and try again.")
+            self.fail(self.activeProvider == .bark
+                ? "Local transcription timed out. Try a shorter recording."
+                : "Transcription timed out. Check your connection and try again.")
         }
     }
 
@@ -434,6 +482,9 @@ final class DictationController {
     }
 
     private func resetSessionState() {
+        barkTranscriptionTask?.cancel()
+        barkTranscriptionTask = nil
+        barkAudio = Data()
         connectionTask?.cancel()
         completionTask?.cancel()
         finalizationTimeoutTask?.cancel()
@@ -449,7 +500,6 @@ final class DictationController {
         pendingAudio.removeAll(keepingCapacity: true)
         pendingAudioBytes = 0
         shouldEndWhenConnected = false
-        usesHybridVoiceActivityDetection = false
         completionGate = TranscriptionCompletionGate()
         finalSegments.removeAll(keepingCapacity: true)
         insertionTarget = nil

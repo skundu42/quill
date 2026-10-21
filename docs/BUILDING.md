@@ -6,6 +6,8 @@
 - Xcode 26 or later
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
 
+Quill supports macOS 14 and later with Gemini. Local Underdog Bark 3.0 transcription requires Apple Silicon and macOS 15 or later. Bark uses the native Core ML runtime; it does not require Python. Download its model (about 202 MB) from **Models** in the app before using local transcription. The download is kept outside the app bundle and reused across launches.
+
 ## Run Quill locally
 
 Generate the Xcode project:

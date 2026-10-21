@@ -6,10 +6,9 @@ struct OnboardingView: View {
     @EnvironmentObject private var preferences: AppPreferences
     @EnvironmentObject private var apiKeys: LocalAPIKeyStore
     @State private var step = 0
-    @State private var apiKey = ""
+    @ObservedObject private var barkModel = BarkModelManager.shared
     @State private var microphoneGranted = Permissions.microphoneStatus == .authorized
     @State private var accessibilityGranted = Permissions.hasAccessibilityAccess
-    @State private var errorMessage: String?
 
     let onComplete: () -> Void
 
@@ -28,7 +27,7 @@ struct OnboardingView: View {
                 switch step {
                 case 0: welcomeStep
                 case 1: permissionsStep
-                default: apiKeyStep
+                default: modelStep
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -56,7 +55,7 @@ struct OnboardingView: View {
                     .font(.title3)
                     .foregroundStyle(.secondary)
             }
-            Text("Hold ⌥ Space, speak naturally, then release. Quill inserts polished text wherever your cursor is.")
+            Text("Hold ⌥ Space, speak naturally, then release. Quill inserts your words wherever your cursor is.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 390)
@@ -108,40 +107,36 @@ struct OnboardingView: View {
         }
     }
 
-    private var apiKeyStep: some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 8) {
-                Text("Connect Gemini").font(.system(size: 28, weight: .bold))
-                Text("Quill is bring-your-own-key. Your API key is saved locally by Quill—not in Keychain—and remains until you replace it.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: 440)
-            }
+    private var modelStep: some View {
+        VStack(spacing: 20) {
+            Text("Choose your model")
+                .font(.system(size: 28, weight: .bold))
+                .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Gemini API key").font(.headline)
-                SecureField("AIza…", text: $apiKey)
-                    .textFieldStyle(.roundedBorder)
-                Text("Audio streams directly to Google for transcription and is not stored by Quill.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            ScrollView {
+                ModelSetupView()
+                    .padding(2)
             }
-            .frame(maxWidth: 460)
-
-            if let errorMessage {
-                Text(errorMessage).font(.caption).foregroundStyle(.red)
-            }
+            .frame(maxWidth: 480, maxHeight: .infinity)
 
             HStack {
                 Button("Back") { step = 1 }
                 Spacer()
-                Button("Save and Finish") { saveAndFinish() }
+                Button("Finish Setup", action: onComplete)
                     .buttonStyle(.borderedProminent)
                     .tint(QuillBrand.signal)
                     .foregroundStyle(QuillBrand.ink)
-                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!isModelReady)
             }
-            .frame(maxWidth: 460)
+            .frame(maxWidth: 480)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var isModelReady: Bool {
+        switch preferences.transcriptionProvider {
+        case .bark: BarkModelManager.isSupported && barkModel.isReady
+        case .gemini: apiKeys.hasKey && !preferences.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -185,16 +180,5 @@ struct OnboardingView: View {
     private func refreshPermissionStatuses() {
         microphoneGranted = Permissions.microphoneStatus == .authorized
         accessibilityGranted = Permissions.hasAccessibilityAccess
-    }
-
-    private func saveAndFinish() {
-        do {
-            try apiKeys.replace(with: apiKey)
-            apiKey = ""
-            errorMessage = nil
-            onComplete()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
     }
 }

@@ -2,6 +2,14 @@ import AppKit
 import Carbon
 import Foundation
 
+enum TranscriptionProvider: String, CaseIterable, Identifiable {
+    case bark
+    case gemini
+
+    var id: String { rawValue }
+    var title: String { self == .bark ? "Underdog Bark 3.0" : "Gemini" }
+}
+
 enum DictationPhase: Equatable {
     case idle
     case listening
@@ -13,7 +21,7 @@ enum DictationPhase: Equatable {
         switch self {
         case .idle: "Ready"
         case .listening: "Listening"
-        case .finalizing: "Polishing"
+        case .finalizing: "Transcribing"
         case .inserting: "Inserting"
         case .error(let message): message
         }
